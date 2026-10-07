@@ -57,3 +57,27 @@ def test_metamod_plugin_without_vdf_manages_ini(tmp_path):
     manager.uninstall("mmodd")
     assert "addons/mmodd" not in ini_path.read_text(encoding="utf-8")
     assert not linking.path_exists(server / "game" / "csgo" / "addons" / "mmodd")
+
+
+def test_metamod_single_vdf_file(tmp_path):
+    server = make_server(tmp_path)
+    repo = init_repo(tmp_path, server=server)
+    vdf = tmp_path / "someplugin.vdf"
+    vdf.write_text('"Plugin" { "file" "addons/someplugin/bin/linux64/someplugin.so" }')
+
+    manifest = add_plugin(repo, "someplugin", vdf)
+    assert manifest["plugin_type"] == "metamod"
+    assert manifest["ini_lines"] == []
+    assert manifest["links"] == [
+        {
+            "source": "files/addons/metamod/someplugin.vdf",
+            "target": "game/csgo/addons/metamod/someplugin.vdf",
+            "kind": "copy",
+        }
+    ]
+
+    manager = PluginManager(repo)
+    manager.install("someplugin")
+    assert (server / "game" / "csgo" / "addons" / "metamod" / "someplugin.vdf").exists()
+    manager.uninstall("someplugin")
+    assert not (server / "game" / "csgo" / "addons" / "metamod" / "someplugin.vdf").exists()

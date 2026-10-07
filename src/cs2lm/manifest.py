@@ -105,7 +105,7 @@ def classify_plugin(source: str | Path, type_hint: str | None = None) -> str:
     else:
         if src.suffix.lower() == ".dll":
             return "css"
-        if src.suffix.lower() in (".so", ".dll"):
+        if src.suffix.lower() in (".so", ".dll", ".vdf"):
             return "metamod"
     raise ValueError(
         "Could not detect plugin type (expected a CSS plugin folder or an "
