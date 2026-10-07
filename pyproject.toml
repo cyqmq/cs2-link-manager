@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cs2-link-manager"
+version = "0.1.0"
+description = "Cross-platform CLI manager that links CS2 CounterStrikeSharp/Metamod plugins from a central repository into a server using symlinks."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "cs2-link-manager developers" }]
+keywords = ["cs2", "counter-strike-2", "counterstrikesharp", "metamod", "plugins", "symlink"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Games/Entertainment :: First Person Shooters",
+]
+
+[project.scripts]
+cs2lm = "cs2lm.cli:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
