@@ -191,8 +191,13 @@ def _doctor_core_checks(
             )
 
 
-def run_doctor(repo: str | Path, logger: Logger | None = None) -> list[dict]:
-    """Run diagnostics and return a list of issue dicts."""
+def run_doctor(repo: str | Path, logger: Logger | None = None, verbose: bool = False) -> list[dict]:
+    """Run diagnostics and return a list of issue dicts.
+
+    When ``verbose`` is True, informational entries (severity ``"info"``)
+    are appended, e.g. the symlink/junction/copy mode each installed plugin
+    is actually using.
+    """
     logger = logger or Logger()
     issues: list[dict] = []
     repo_path = Path(repo).resolve()
@@ -295,6 +300,27 @@ def run_doctor(repo: str | Path, logger: Logger | None = None) -> list[dict]:
                     "code": "permission",
                     "plugin": plugin,
                     "message": f"no write permission on {parent}",
+                }
+            )
+
+    if verbose:
+        # Report the link mode each installed plugin actually uses
+        # (symlink / junction / copy), so users can see link quality at a
+        # glance without inspecting the state database.
+        kinds_by_plugin: dict[str, set[str]] = {}
+        for plugin, rec, _target, _source in _iter_tool_links(
+            repo_path, server, csgo_rel
+        ):
+            kind = rec.get("kind_used") or rec.get("kind") or "unknown"
+            kinds_by_plugin.setdefault(plugin, set()).add(kind)
+        for plugin in sorted(kinds_by_plugin):
+            kinds = ", ".join(sorted(kinds_by_plugin[plugin]))
+            issues.append(
+                {
+                    "severity": "info",
+                    "code": "link-mode",
+                    "plugin": plugin,
+                    "message": f"installed links use mode(s): {kinds}",
                 }
             )
 

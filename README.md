@@ -354,9 +354,22 @@ cs2lm install SimpleAdmin --backup
 ```bash
 cs2lm web --port 8080
 # cs2-link-manager Web UI at http://127.0.0.1:8080/  (Ctrl+C to stop)
+# CS2LM_READY port=8080 auth=none
 ```
 
-页面列出插件（名称、类型、版本、启用状态、安装状态）并提供启用/禁用按钮。
+页面顶部有**服务器状态卡**（Web 在线、认证状态、CS2 进程是否在运行、仓库
+路径、服务器路径），下面列出插件（名称、类型、版本、启用状态、安装状态）
+并提供启用/禁用按钮。
+
+**就绪检测**：启动时会打印 `CS2LM_READY port=...`，同时提供
+`GET /api/health` 端点返回 JSON `{"status": "ok", ...}`——包装脚本可以据此
+判断服务**真正开始监听**，而不是只靠 `kill -0` 判断进程存活：
+
+```bash
+curl -H "X-Auth-Token: my-secret" http://127.0.0.1:8080/api/health
+# {"status": "ok", "service": "cs2-link-manager-web", ...}
+```
+
 **安全提示**：默认绑定 `127.0.0.1` 且没有认证——不要把端口暴露到不可信
 网络。如果需要在远程机器上使用，请通过 SSH 端口转发访问：
 
@@ -365,8 +378,8 @@ ssh -L 8080:127.0.0.1:8080 user@server-host
 # 然后在本地打开 http://127.0.0.1:8080/
 ```
 
-绑定非回环地址（`--host 0.0.0.0` 等）时工具会打印警告。需要基础认证时，
-用 `--auth-token` 设置共享令牌：
+绑定非回环地址（`--host 0.0.0.0` 等）时**必须**设置 `--auth-token`，否则
+命令直接报错退出。需要基础认证时：
 
 ```bash
 cs2lm web --host 0.0.0.0 --port 8080 --auth-token my-secret
@@ -380,6 +393,37 @@ cs2lm web --host 0.0.0.0 --port 8080 --auth-token my-secret
 curl -H "X-Auth-Token: my-secret" http://127.0.0.1:8080/
 curl -X POST -H "X-Auth-Token: my-secret" -d "plugin=MatchZy&action=disable" http://127.0.0.1:8080/toggle
 ```
+
+### 后台运行（--daemon）
+
+`web` 命令自带跨平台后台运行，不需要在面板脚本里分别写 `nohup` 和
+`Start-Process`：
+
+```bash
+cs2lm web --host 0.0.0.0 --port 27015 --auth-token my-secret \
+  --daemon --pidfile /srv/cs2/web.pid --daemon-log /srv/cs2/web.log
+# Started web UI daemon (pidfile /srv/cs2/web.pid).
+```
+
+* Linux：子进程以独立 session 后台运行；
+* Windows：子进程以 `DETACHED_PROCESS` 分离运行；
+* PID 写入 `--pidfile`，stdout/stderr 追加到 `--daemon-log`；
+* 收到 `SIGTERM`/`Ctrl+C` 时优雅关闭，不会残留端口占用。
+
+## 与游戏服务器同端口运行（UDP/TCP 共存）
+
+CS2 的服务器流量是 **UDP**，Web UI 是 **TCP**——两种协议互不冲突，可以
+让管理面板和游戏服务共用同一个端口号（例如简幻欢面板分配的一个随机端口）：
+
+```bash
+# CS2 监听 UDP 27015（游戏流量）
+# cs2lm 监听 TCP 27015（管理面板）
+cs2lm web --host 0.0.0.0 --port 27015 --auth-token my-secret --daemon
+```
+
+`curl http://127.0.0.1:27015/?token=my-secret` 返回管理页面，同时
+UDP 27015 上的游戏流量完全不受影响。这是面板场景的核心用法：**不需要
+为管理面板额外申请端口**。
 
 ## 测试
 

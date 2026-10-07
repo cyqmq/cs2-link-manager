@@ -112,6 +112,21 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Require this token to view and toggle plugins (recommended when binding a non-loopback host)",
     )
+    p_web.add_argument(
+        "--daemon",
+        action="store_true",
+        help="Run the web UI as a detached background process and exit",
+    )
+    p_web.add_argument(
+        "--pidfile",
+        default=None,
+        help="Write the daemon PID to this file (used with --daemon)",
+    )
+    p_web.add_argument(
+        "--daemon-log",
+        default=None,
+        help="Append daemon stdout/stderr to this log file (used with --daemon)",
+    )
 
     return parser
 
@@ -124,7 +139,8 @@ def cmd_init(args: argparse.Namespace, logger: Logger) -> int:
     repo = Path(args.repo).expanduser().resolve()
     server = Path(args.server).expanduser().resolve()
     if (repo / "config.json").exists():
-        logger.warn("init", f"repository already initialized: {repo}")
+        print(f"Repository already initialized: {repo}")
+        logger.info("init", "repository already initialized", repo=str(repo))
         return 0
     (repo / "plugins").mkdir(parents=True, exist_ok=True)
     (repo / "profiles").mkdir(parents=True, exist_ok=True)
@@ -259,7 +275,7 @@ def cmd_list(args: argparse.Namespace, logger: Logger) -> int:
 
 
 def cmd_doctor(args: argparse.Namespace, logger: Logger) -> int:
-    issues = run_doctor(args.repo, logger=logger)
+    issues = run_doctor(args.repo, logger=logger, verbose=args.verbose)
     if not issues:
         print("All checks passed.")
         return 0
@@ -320,15 +336,43 @@ def cmd_adopt(args: argparse.Namespace, logger: Logger) -> int:
 
 
 def cmd_web(args: argparse.Namespace, logger: Logger) -> int:
+    from cs2lm.daemon import start_daemon
     from cs2lm.webui import run_webui
 
-    if args.host not in ("127.0.0.1", "localhost", "::1") and not args.auth_token:
-        print(
-            f"WARNING: binding web UI to {args.host} without --auth-token "
-            "exposes it to the network with no authentication. Use "
-            "--auth-token to protect it."
+    host = args.host
+    token = args.auth_token
+    if token == "":
+        raise ValueError(
+            "--auth-token must not be empty; pass a non-empty token or omit "
+            "the option entirely."
         )
-    run_webui(args.repo, host=args.host, port=args.port, auth_token=args.auth_token)
+    is_loopback = host in ("127.0.0.1", "localhost", "::1")
+    if not is_loopback and not token:
+        raise ValueError(
+            f"binding web UI to {host} requires --auth-token for "
+            "authentication; pass a non-empty token (e.g. "
+            "--auth-token my-secret)."
+        )
+
+    if args.daemon:
+        pid = start_daemon(
+            args.repo,
+            host=host,
+            port=args.port,
+            auth_token=token,
+            pidfile=args.pidfile,
+            logfile=args.daemon_log,
+        )
+        location = args.pidfile or f"pid {pid}"
+        print(f"Started web UI daemon ({location}).")
+        return 0
+
+    if not is_loopback:
+        print(
+            f"WARNING: binding web UI to {host} with --auth-token. Keep the "
+            "token secret and prefer SSH port forwarding when possible."
+        )
+    run_webui(args.repo, host=host, port=args.port, auth_token=token)
     return 0
 
 
@@ -381,6 +425,17 @@ HANDLERS = {
 
 
 def main(argv: list[str] | None = None) -> int:
+    # On Windows, redirected stdout/stderr uses the system code page (e.g.
+    # GBK). Force UTF-8 so web.log and console output are consistent across
+    # platforms (same bytes as on Linux).
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            try:
+                reconfigure(encoding="utf-8", errors="replace")
+            except (OSError, ValueError):
+                pass
+
     parser = build_parser()
     args = parser.parse_args(argv)
     logger = _make_logger(args)

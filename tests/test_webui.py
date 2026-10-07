@@ -1,7 +1,9 @@
 """Tests for the local web UI."""
 from __future__ import annotations
 
+import os
 import threading
+import urllib.error
 import urllib.parse
 import urllib.request
 from http.server import ThreadingHTTPServer
@@ -82,6 +84,107 @@ def test_webui_toggle_enable(repo_server, tmp_path):
     finally:
         server.shutdown()
         thread.join()
+
+
+def test_webui_health_endpoint(repo_server, tmp_path):
+    import json as jsonlib
+
+    repo, _server = repo_server
+    add_plugin(repo, tmp_path, "WebPlugin")
+    server, thread, port = start_server(repo, auth_token="secret")
+    try:
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{port}/api/health",
+            headers={"X-Auth-Token": "secret"},
+        )
+        with urllib.request.urlopen(req) as resp:
+            assert resp.status == 200
+            data = jsonlib.loads(resp.read().decode("utf-8"))
+        assert data["status"] == "ok"
+        assert data["service"] == "cs2-link-manager-web"
+        assert data["auth"] is True
+
+        # Unauthorized health check -> 401.
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/api/health")
+        try:
+            urllib.request.urlopen(req)
+            raise AssertionError("expected HTTPError for unauthorized health")
+        except urllib.error.HTTPError as exc:
+            assert exc.code == 401
+    finally:
+        server.shutdown()
+        thread.join()
+
+
+def test_webui_daemon_writes_pidfile(repo_server, tmp_path):
+    """web --daemon spawns a detached child and writes its PID."""
+    import signal
+    import socket
+    import time
+
+    repo, _server = repo_server
+    add_plugin(repo, tmp_path, "WebPlugin")
+
+    # Pick a free TCP port.
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+
+    pidfile = tmp_path / "web.pid"
+    logfile = tmp_path / "web.log"
+    rc = cli.main(
+        [
+            "--repo",
+            str(repo),
+            "web",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+            "--auth-token",
+            "secret",
+            "--daemon",
+            "--pidfile",
+            str(pidfile),
+            "--daemon-log",
+            str(logfile),
+        ]
+    )
+    assert rc == 0
+    try:
+        # PID file appears and the child serves HTTP.
+        pid = None
+        for _ in range(50):
+            if pidfile.exists():
+                pid = int(pidfile.read_text(encoding="utf-8").strip())
+                break
+            time.sleep(0.1)
+        assert pid is not None and pid > 0
+
+        reached = False
+        for _ in range(50):
+            try:
+                req = urllib.request.Request(
+                    f"http://127.0.0.1:{port}/api/health",
+                    headers={"X-Auth-Token": "secret"},
+                )
+                with urllib.request.urlopen(req, timeout=1) as resp:
+                    assert resp.status == 200
+                reached = True
+                break
+            except Exception:  # noqa: BLE001
+                time.sleep(0.1)
+        assert reached, "daemon web server did not become ready"
+    finally:
+        # Cleanup: terminate the child.
+        if pidfile.exists():
+            try:
+                pid = int(pidfile.read_text(encoding="utf-8").strip())
+                os.kill(pid, signal.SIGTERM)
+            except (OSError, ValueError):
+                pass
+        time.sleep(0.3)
 
 
 def test_webui_accepts_auth_token_header(repo_server, tmp_path):

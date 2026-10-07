@@ -30,6 +30,25 @@ def test_doctor_clean(repo_server, tmp_path):
     assert "missing-css-api" not in codes(issues)
 
 
+def test_doctor_verbose_reports_link_mode(repo_server, tmp_path):
+    """doctor --verbose reports each installed plugin's link mode."""
+    repo, _server = repo_server
+    pkg = make_css_package(tmp_path, "TestPlugin")
+    add_plugin(repo, "TestPlugin", pkg)
+    PluginManager(repo).install("TestPlugin")
+
+    issues = run_doctor(repo, verbose=True)
+    modes = [i for i in issues if i["code"] == "link-mode"]
+    assert modes
+    assert modes[0]["severity"] == "info"
+    assert modes[0]["plugin"] == "TestPlugin"
+    assert "symlink" in modes[0]["message"] or "junction" in modes[0]["message"]
+
+    # Without verbose there are no info entries.
+    plain = run_doctor(repo)
+    assert not [i for i in plain if i["severity"] == "info"]
+
+
 def test_doctor_detects_broken_link(repo_server, tmp_path):
     repo, server = repo_server
     pkg = make_css_package(tmp_path, "TestPlugin")

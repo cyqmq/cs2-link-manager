@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **web readiness**: `GET /api/health` returns a JSON health check and
+  startup prints `CS2LM_READY port=...`, so wrapper scripts can detect that
+  the server is listening (not merely that a process is alive).
+- **web daemon**: `web --daemon [--pidfile ...] [--daemon-log ...]` starts
+  the UI as a detached background process cross-platform (Linux
+  `start_new_session`, Windows `DETACHED_PROCESS`), replacing per-platform
+  `nohup`/`Start-Process` boilerplate in panel scripts.
+- **web status card**: the page now shows Web/Auth/CS2-process/Repo/Server
+  status at a glance.
+- **doctor verbose**: `--verbose` reports each installed plugin's actual
+  link mode (symlink / junction / copy).
+- **UTF-8 output**: CLI forces UTF-8 on stdout/stderr so Windows web.log is
+  identical to Linux (no more GBK mojibake).
+
 ### Fixed
 
 - **doctor**: Metamod binary detection now uses the real CS2 paths
@@ -28,9 +44,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **import**: rejecting a symlink path now explains that the path is likely
   already managed by this tool or another repository.
 - **web**: `--auth-token <token>` adds a required shared token to the web UI;
-  binding a non-loopback host without a token prints a warning. Tokens can be
+  binding a non-loopback host without a token now **errors out** instead of
+  just warning, and an explicitly empty token is rejected. Tokens can be
   sent via the `X-Auth-Token` header (script/API friendly) as well as the
   `?token=` query parameter / form field.
+- **web**: SIGTERM triggers graceful shutdown, preventing port leaks.
+- **version**: `--version` now reads from `importlib.metadata` (single
+  source: `pyproject.toml`), with a fallback for source checkouts.
+- **init**: running `init` again prints `Repository already initialized:
+  <repo>` for easy scripting.
+- **README**: documents UDP/TCP single-port coexistence and the daemon mode.
 
 ## [0.1.0] - 2026-10-07
 

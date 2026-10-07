@@ -139,3 +139,26 @@ def test_cli_conflict_returns_clean_error(repo_server, tmp_path, capsys):
     captured = capsys.readouterr()
     assert "error:" in captured.err
     assert "backup" in captured.err
+
+
+def test_cli_init_idempotent_prints_message(repo_server, capsys):
+    repo, server = repo_server
+    assert run(["--repo", str(repo), "init", "--server", str(server)]) == 0
+    captured = capsys.readouterr()
+    assert "already initialized" in captured.out
+
+
+def test_cli_web_rejects_empty_token(repo_server, capsys):
+    repo, _server = repo_server
+    rc = run(["--repo", str(repo), "web", "--host", "0.0.0.0", "--auth-token", ""])
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert "must not be empty" in captured.err
+
+
+def test_cli_web_requires_token_on_non_loopback(repo_server, capsys):
+    repo, _server = repo_server
+    rc = run(["--repo", str(repo), "web", "--host", "0.0.0.0"])
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert "requires --auth-token" in captured.err
