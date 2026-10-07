@@ -159,10 +159,19 @@ class PluginManager:
         message = (
             f"target already exists and is not managed by this tool: {target}"
         )
-        if self.backup or self.force:
+        if self.force:
+            # --force: take over without asking (back up the unmanaged target).
+            linking.backup_target(
+                target,
+                self.backup_root,
+                self.server,
+                dry_run=self.dry_run,
+                logger=self.logger,
+            )
+        elif self.backup:
             if not self.yes and not self._confirm():
                 raise linking.ConflictError(
-                    "Aborted by user. Use --yes to skip confirmation."
+                    "Aborted by user. Use --force to take over without confirmation."
                 )
             linking.backup_target(
                 target,
@@ -173,7 +182,8 @@ class PluginManager:
             )
         else:
             raise linking.ConflictError(
-                f"{message}. Use --backup to back it up, or --force to confirm."
+                f"{message}. Use --backup to confirm a backup, or --force to "
+                "take over without asking."
             )
 
     def _confirm(self) -> bool:

@@ -145,6 +145,24 @@ def test_install_conflict_with_backup_confirmed(repo_server, tmp_path, monkeypat
     assert backups
 
 
+def test_install_conflict_with_force_skips_confirmation(repo_server, tmp_path):
+    repo, server = repo_server
+    pkg = make_css_package(tmp_path, "TestPlugin")
+    add_plugin(repo, "TestPlugin", pkg)
+
+    target = plugin_path(server, "TestPlugin")
+    target.mkdir(parents=True)
+    (target / "unmanaged.txt").write_text("mine")
+
+    # --force takes over without asking for confirmation.
+    manager = make_manager(repo, force=True)
+    manager.install("TestPlugin")
+    assert linking.path_exists(target)
+    assert not (target / "unmanaged.txt").exists()
+    backups = list((server / ".cs2lm-backups").rglob("unmanaged.txt"))
+    assert backups
+
+
 def test_install_dry_run_creates_nothing(repo_server, tmp_path):
     repo, server = repo_server
     pkg = make_css_package(tmp_path, "TestPlugin")

@@ -297,6 +297,9 @@ def cmd_adopt(args: argparse.Namespace, logger: Logger) -> int:
         raise FileNotFoundError(f"No adoptable plugin found: {args.plugin}")
     if adopted:
         print(f"Adopted {len(adopted)} plugin(s): {', '.join(adopted)}")
+        print("The original plugin files are still on the server.")
+        print("Take over each plugin with:")
+        print("  cs2lm install <name> --backup")
     else:
         print("No new plugins adopted.")
     return 0

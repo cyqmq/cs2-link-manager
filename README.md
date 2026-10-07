@@ -30,7 +30,7 @@ removes the links — the repository copy is never touched.
 
 ## Requirements
 
-* Python **3.11+** (standard library only; `tomllib` not needed — we use JSON).
+* Python **3.11+** (standard library only).
 * Linux (primary) or Windows (supported with junctions/copy fallback).
 * A CS2 dedicated server with Metamod:Source and CounterStrikeSharp already
   installed (the tool does **not** install the core frameworks).
@@ -140,6 +140,19 @@ Each plugin in the repository has `manifest.json`:
 * `ini_lines` (Metamod plugins only) are lines appended to
   `addons/metamod/metaplugins.ini`.
 
+### State database
+
+* **Location**: `<repo>/state/links.json`.
+* **Purpose**: records every link `install`/`enable` creates (plugin, source,
+  target, kind, timestamp). `uninstall`/`disable` remove the matching records,
+  which is how the tool knows exactly what to remove and never touches
+  unmanaged files.
+* **If you delete it**: `uninstall` has no records to follow, so server-side
+  links are left in place (the manifest `enabled` flag is still updated).
+  `doctor` will report those leftover links as `orphan-link` warnings.
+  To recover cleanly: remove the leftover links (as listed by `doctor`),
+  then run `cs2lm install <name>` again to rebuild the records.
+
 ### Link types
 
 | Kind | Meaning |
@@ -158,8 +171,11 @@ requirements.
   * default: **refuse**;
   * `--backup`: ask for confirmation, then move the existing content to
     `<server>/.cs2lm-backups/<timestamp>/` and install;
-  * `--force`: same behavior as `--backup` (confirmation is required);
-  * `--yes`: skip the confirmation prompt (for scripts/CI).
+  * `--force`: move the existing content to backups and install
+    **without asking** — use when you explicitly want to take over the
+    path;
+  * `--yes`: skip the confirmation prompt when using `--backup` (for
+    scripts/CI).
 * Unmanaged files are never overwritten.
 * Repository files are never deleted.
 * All paths are validated to stay inside the server root.
@@ -217,7 +233,10 @@ manually (see
 [CounterStrikeSharp docs](https://docs.cssharp.dev/) and
 [Metamod:Source install guide](https://wiki.alliedmods.net/Installing_metamod:source)).
 This is intentional: core files include native binaries and loader `.vdf`
-files whose symlinking is fragile.
+files whose symlinking is fragile — the loader chain depends on how the engine
+resolves `gameinfo.gi` search paths, and Metamod has been broken by engine
+updates before (see
+[metamod-source issue #232](https://github.com/alliedmodders/metamod-source/issues/232)).
 
 ## Metamod handling (important)
 
@@ -289,10 +308,23 @@ and profiles from then on — the tool acts as the "landing layer":
 ```bash
 cs2lm adopt
 # Adopted 3 plugin(s): MatchZy, SimpleAdmin, Retakes
+# The original plugin files are still on the server.
+# Take over each plugin with:
+#   cs2lm install <name> --backup
+```
+
+The originals are left in place so nothing is destroyed during the copy.
+To take over a plugin without manual cleanup, install it with `--backup` —
+the old files are moved to `<server>/.cs2lm-backups/<timestamp>/` and the
+plugin is linked from the repository:
+
+```bash
+cs2lm install MatchZy --backup
+cs2lm install SimpleAdmin --backup
 ```
 
 Use `--plugin <name>` to adopt a single plugin. Plugins already in the
-repository are skipped, and the original server files are left untouched.
+repository are skipped.
 
 ## Web UI
 
@@ -306,7 +338,13 @@ cs2lm web --port 8080
 
 The page lists plugins (name, type, version, enabled, installed) with
 enable/disable buttons. **Security**: it binds to `127.0.0.1` by default and
-has no authentication — do not expose it to an untrusted network.
+has no authentication — do not expose it to an untrusted network. To use it
+from a remote machine, tunnel it over SSH instead of opening the port:
+
+```bash
+ssh -L 8080:127.0.0.1:8080 user@server-host
+# then open http://127.0.0.1:8080/ locally
+```
 
 ## Testing
 
