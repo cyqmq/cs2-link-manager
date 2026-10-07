@@ -80,7 +80,8 @@ cs2lm profile use competitive
 | Command | Description |
 | --- | --- |
 | `init --server <dir>` | Create repository skeleton and `config.json`. |
-| `add <name> <path>` / `add <name> --url <zip-url>` | Copy a plugin package (local or downloaded zip) into the repo, generate `manifest.json`. |
+| `add <name> <path>` / `add <name> --url <zip-url>` / `add <name> --pkg <file.cs2pkg>` | Copy a plugin package (local, downloaded zip, or `.cs2pkg`) into the repo, generate `manifest.json`. |
+| `pack <name> [--out <dir>]` | Package a repository plugin as a `.cs2pkg` file. |
 | `install <name>` | Create links defined by the manifest (idempotent). |
 | `uninstall <name>` | Remove tool-created links; keep repo files. |
 | `enable <name>` / `disable <name>` | Create/remove links (same as install/uninstall). |
@@ -90,6 +91,8 @@ cs2lm profile use competitive
 | `profile list` / `profile delete <name>` | List / delete profiles. |
 | `doctor` | Check server structure, broken links, missing targets, permissions, conflicts, CSS API version dependencies. |
 | `import <name> <path-in-server>` | Reverse-import a plugin already on the server. |
+| `adopt [--plugin <name>]` | Adopt existing CSS plugins on the server into the repository. |
+| `web [--host H] [--port P]` | Start a local web UI to browse and toggle plugins. |
 
 Global options: `--repo <path>` (default `plugins-repo`, or `$CS2LM_REPO`),
 `--dry-run`, `--log <file>`, `--log-format text|json`, `--verbose`,
@@ -253,6 +256,58 @@ The API version is read directly from
 built-in ECMA-335 metadata reader (no third-party dependency). If the DLL
 cannot be parsed, `doctor` degrades to the unverifiable warning above.
 
+## `.cs2pkg` package format
+
+A `.cs2pkg` file is a zip archive that standardizes plugin distribution:
+
+* `cs2pkg.json` — package metadata (name, version, plugin_type, ini_lines);
+* the plugin file tree (an `addons/` tree mirroring the server layout).
+
+Plugin authors can publish `.cs2pkg` files; server owners install them with:
+
+```bash
+cs2lm add MyPlugin --pkg ./MyPlugin.cs2pkg
+```
+
+Repository plugins can be exported back into this format:
+
+```bash
+cs2lm pack MyPlugin --out ./releases/
+# -> releases/MyPlugin.cs2pkg
+```
+
+The format reuses the existing manifest/link generation: after `add --pkg`,
+the plugin is stored in the repository and managed with symlinks exactly like
+any other plugin.
+
+## Adopting existing plugins
+
+If a server already has plugins installed by another manager (or manually),
+`adopt` copies them into the repository so you can manage them with symlinks
+and profiles from then on — the tool acts as the "landing layer":
+
+```bash
+cs2lm adopt
+# Adopted 3 plugin(s): MatchZy, SimpleAdmin, Retakes
+```
+
+Use `--plugin <name>` to adopt a single plugin. Plugins already in the
+repository are skipped, and the original server files are left untouched.
+
+## Web UI
+
+A small read/write web interface is available for server owners who prefer a
+browser over the CLI:
+
+```bash
+cs2lm web --port 8080
+# cs2-link-manager Web UI at http://127.0.0.1:8080/  (Ctrl+C to stop)
+```
+
+The page lists plugins (name, type, version, enabled, installed) with
+enable/disable buttons. **Security**: it binds to `127.0.0.1` by default and
+has no authentication — do not expose it to an untrusted network.
+
 ## Testing
 
 ```bash
@@ -267,7 +322,8 @@ touches a real server.
 
 * `add` expects a plugin package that is either an `addons/` tree or a plugin
   folder (`.dll` + `.deps.json` at its root). Remote **zip** files are handled
-  automatically via `--url`; local zip files must still be extracted first.
+  automatically via `--url`, and `.cs2pkg` files via `--pkg`; other local
+  zip files must still be extracted first.
 * The CSS API version check is best-effort: it reads the `.deps.json`
   declaration and the installed `CounterStrikeSharp.API.dll` assembly
   version. If the DLL cannot be parsed, `doctor` tells you to check

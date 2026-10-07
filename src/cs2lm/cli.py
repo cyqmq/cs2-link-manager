@@ -51,11 +51,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_add.add_argument(
         "path",
         nargs="?",
-        help="Path to the plugin package or folder (omit when using --url)",
+        help="Path to the plugin package or folder (omit when using --url/--pkg)",
     )
     p_add.add_argument("--url", default=None, help="Download a zip package from this URL")
+    p_add.add_argument("--pkg", default=None, help="Add a plugin from a local .cs2pkg file")
     p_add.add_argument("--type", choices=["css", "metamod"], default=None)
     p_add.add_argument("--version", default=None)
+
+    p_pack = sub.add_parser("pack", help="Package a repository plugin as a .cs2pkg file")
+    p_pack.add_argument("name", help="Plugin name")
+    p_pack.add_argument("--out", default=".", help="Output directory or file path (default: current directory)")
 
     p_install = sub.add_parser("install", help="Install a plugin (create links)")
     p_install.add_argument("name")
@@ -82,6 +87,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_import.add_argument("--type", choices=["css", "metamod"], default=None)
     p_import.add_argument("--version", default=None)
 
+    p_adopt = sub.add_parser(
+        "adopt",
+        help="Adopt existing CSS plugins on the server into the repository",
+    )
+    p_adopt.add_argument("--plugin", default=None, help="Only adopt this plugin")
+
     p_profile = sub.add_parser("profile", help="Manage profiles")
     p_profile_sub = p_profile.add_subparsers(dest="profile_command", required=True)
     p_profile_create = p_profile_sub.add_parser("create", help="Create a profile")
@@ -92,6 +103,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_profile_list = p_profile_sub.add_parser("list", help="List profiles")
     p_profile_delete = p_profile_sub.add_parser("delete", help="Delete a profile")
     p_profile_delete.add_argument("name")
+
+    p_web = sub.add_parser("web", help="Start a local web UI to browse and toggle plugins")
+    p_web.add_argument("--host", default="127.0.0.1", help="Bind address (default: 127.0.0.1)")
+    p_web.add_argument("--port", type=int, default=8080, help="Port (default: 8080)")
 
     return parser
 
@@ -122,13 +137,15 @@ def cmd_init(args: argparse.Namespace, logger: Logger) -> int:
 
 
 def cmd_add(args: argparse.Namespace, logger: Logger) -> int:
+    from cs2lm.cs2pkg import extract_pkg
     from cs2lm.manifest import add_plugin
     from cs2lm.url_add import DownloadError, download_and_extract
 
-    if args.url and args.path:
-        raise ValueError("Provide either a local path or --url, not both")
-    if not args.url and not args.path:
-        raise ValueError("Provide a local path or --url for the plugin package")
+    sources = [bool(args.path), bool(args.url), bool(args.pkg)]
+    if sum(sources) > 1:
+        raise ValueError("Provide only one of path, --url, or --pkg")
+    if not any(sources):
+        raise ValueError("Provide a local path, --url, or --pkg for the plugin package")
 
     if args.url:
         with tempfile.TemporaryDirectory(prefix="cs2lm-url-") as tmp:
@@ -142,6 +159,18 @@ def cmd_add(args: argparse.Namespace, logger: Logger) -> int:
                 source,
                 type_hint=args.type,
                 version=args.version,
+            )
+    elif args.pkg:
+        with tempfile.TemporaryDirectory(prefix="cs2lm-pkg-") as tmp:
+            source, meta = extract_pkg(args.pkg, tmp)
+            type_hint = args.type or (meta or {}).get("plugin_type")
+            version = args.version or (meta or {}).get("version")
+            manifest = add_plugin(
+                args.repo,
+                args.name,
+                source,
+                type_hint=type_hint,
+                version=version,
             )
     else:
         manifest = add_plugin(
@@ -247,6 +276,39 @@ def cmd_import(args: argparse.Namespace, logger: Logger) -> int:
     return 0
 
 
+def cmd_pack(args: argparse.Namespace, logger: Logger) -> int:
+    from cs2lm.cs2pkg import build_pkg
+
+    out = build_pkg(args.repo, args.name, args.out)
+    logger.info("pack", f"packaged plugin '{args.name}'", out=str(out))
+    print(f"Packaged '{args.name}' -> {out}")
+    return 0
+
+
+def cmd_adopt(args: argparse.Namespace, logger: Logger) -> int:
+    from cs2lm.adopt import adopt_css_plugins
+    from cs2lm.manifest import list_plugins
+
+    if args.plugin and args.plugin in list_plugins(args.repo):
+        print(f"'{args.plugin}' is already in the repository.")
+        return 0
+    adopted = adopt_css_plugins(args.repo, only=args.plugin, logger=logger)
+    if args.plugin and args.plugin not in adopted:
+        raise FileNotFoundError(f"No adoptable plugin found: {args.plugin}")
+    if adopted:
+        print(f"Adopted {len(adopted)} plugin(s): {', '.join(adopted)}")
+    else:
+        print("No new plugins adopted.")
+    return 0
+
+
+def cmd_web(args: argparse.Namespace, logger: Logger) -> int:
+    from cs2lm.webui import run_webui
+
+    run_webui(args.repo, host=args.host, port=args.port)
+    return 0
+
+
 def cmd_profile(args: argparse.Namespace, logger: Logger) -> int:
     command = args.profile_command
     if command == "list":
@@ -281,6 +343,7 @@ def cmd_profile(args: argparse.Namespace, logger: Logger) -> int:
 HANDLERS = {
     "init": cmd_init,
     "add": cmd_add,
+    "pack": cmd_pack,
     "install": cmd_install,
     "uninstall": cmd_uninstall,
     "enable": cmd_enable,
@@ -288,7 +351,9 @@ HANDLERS = {
     "list": cmd_list,
     "doctor": cmd_doctor,
     "import": cmd_import,
+    "adopt": cmd_adopt,
     "profile": cmd_profile,
+    "web": cmd_web,
 }
 
 
