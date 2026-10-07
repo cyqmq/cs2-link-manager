@@ -1,5 +1,9 @@
 # cs2-link-manager
 
+![Python](https://img.shields.io/badge/python-3.11+-blue.svg)
+![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)
+[![CI](https://github.com/cyqmq/cs2-link-manager/actions/workflows/ci.yml/badge.svg)](https://github.com/cyqmq/cs2-link-manager/actions/workflows/ci.yml)
+
 A cross-platform CLI tool that manages CS2 **CounterStrikeSharp** and
 **Metamod** plugins by keeping plugin files in a central **repository** and
 mapping them into the server directory with **symbolic links** (junctions on
@@ -34,7 +38,7 @@ removes the links — the repository copy is never touched.
 ## Installation
 
 ```bash
-git clone https://github.com/yourname/cs2-link-manager.git
+git clone https://github.com/cyqmq/cs2-link-manager.git
 cd cs2-link-manager
 pip install .
 # or for development:
@@ -88,7 +92,8 @@ cs2lm profile use competitive
 | `import <name> <path-in-server>` | Reverse-import a plugin already on the server. |
 
 Global options: `--repo <path>` (default `plugins-repo`, or `$CS2LM_REPO`),
-`--dry-run`, `--log <file>`, `--log-format text|json`, `--verbose`.
+`--dry-run`, `--log <file>`, `--log-format text|json`, `--verbose`,
+`--version`.
 
 ### `--dry-run`
 
@@ -162,25 +167,63 @@ requirements.
 
 ## Windows notes
 
-* Creating real symlinks requires **Administrator** privileges or **Developer
-  Mode** (Windows 10 1703+).
-* Directory junctions do **not** require privileges and are used
-  automatically when symlink creation fails.
-* If both fail, the tool falls back to **copy mode** and tells you why.
-* The plugin directories (`plugins/<Name>`) are directories, so junction
-  fallback works for the common case.
+* Creating a **real symbolic link** requires the
+  `SeCreateSymbolicLinkPrivilege`, which normally means running as
+  **Administrator** or enabling **Developer Mode** (Windows 10 1703+,
+  Settings → Privacy & security → For developers).
+* **Directory junctions** (`mklink /J`) do **not** require Administrator or
+  Developer Mode — any user can create them on NTFS volumes. Junctions work
+  for directories only. The tool automatically falls back to a junction when
+  creating a directory symlink fails.
+* **Copy fallback** is used when both symlink and junction fail. Typical causes:
+  * the target is on a non-NTFS filesystem (FAT32/exFAT, some network shares),
+  * the target is a single file, not a directory (junctions cannot link
+    files),
+  * the parent directory is not writable.
+  You will always see a clear warning explaining which mode was used and why.
+* Install/uninstall still work correctly in copy mode; the only difference is
+  that plugin updates require a reinstall (copies are not kept in sync
+  automatically).
+* The plugin directories (`plugins/<Name>`, `configs/plugins/<Name>`,
+  `lang/<Name>`, `gamedata/plugins/<Name>`) are all directories, so junction
+  fallback covers the common case.
+
+## Link strategy by path
+
+The tool decides per-path how to link plugin files into the server. Core
+framework paths are never touched.
+
+| Path (relative to `game/csgo/`) | Strategy | Why |
+| --- | --- | --- |
+| `addons/counterstrikesharp/plugins/<Name>/` | **symlink** (junction on Windows) | CSS enumerates this directory; a symlinked dir is transparent to .NET |
+| `addons/counterstrikesharp/configs/plugins/<Name>/` | **symlink** (junction on Windows) | Per-plugin config directory |
+| `addons/counterstrikesharp/lang/<Name>/` | **symlink** (junction on Windows) | Per-plugin translations |
+| `addons/counterstrikesharp/gamedata/plugins/<Name>/` | **symlink** (junction on Windows) | Plugin-owned gamedata subdirectory |
+| `addons/counterstrikesharp/gamedata/gamedata.json` | **not managed** | Shared by the framework; merging is manual |
+| `addons/counterstrikesharp/api`, `bin`, `dotnet`, `shared` | **not managed** | CSS core framework |
+| `addons/metamod/bin/` | **not managed** | Metamod native binaries (`.so`/`.dll`) |
+| `addons/metamod/*.vdf` (third-party plugin) | **copy + backup + rollback** | Loader files are sensitive to symlinking |
+| `addons/metamod/metaplugins.ini` | **line edit + backup + rollback** | Small text file edited in place |
+| `addons/<metamod-plugin>/` (plugin binaries) | **symlink** (copy fallback on Windows) | Third-party Metamod plugin directory |
+| `addons/metamod.vdf`, `addons/metamod_x64.vdf` | **not managed** | Metamod core loader files |
+| `game/csgo/gameinfo.gi` | **not managed** | Engine config; Metamod is loaded from here |
+
+**Metamod/CSS core frameworks are not managed by this tool.** Install them
+manually (see
+[CounterStrikeSharp docs](https://docs.cssharp.dev/) and
+[Metamod:Source install guide](https://wiki.alliedmods.net/Installing_metamod:source)).
+This is intentional: core files include native binaries and loader `.vdf`
+files whose symlinking is fragile.
 
 ## Metamod handling (important)
 
-* **Metamod/CSS core frameworks are not managed by this tool.** Install them
-  manually (see [CounterStrikeSharp docs](https://docs.cssharp.dev/)). This
-  is intentional: core files include native binaries and loader `.vdf` files
-  whose symlinking is fragile.
 * Third-party **Metamod plugins**:
   * `.vdf` files in `addons/metamod/` are managed as **copies** (backup +
     rollback on failure);
-  * `metaplugins.ini` edits are made with a backup;
-  * plugin binary directories (`addons/<pluginname>/`) are symlinked.
+  * `metaplugins.ini` edits are made with a backup and rolled back on
+    failure;
+  * plugin binary directories (`addons/<pluginname>/`) are symlinked
+    (junction/copy fallback on Windows).
 
 ## Testing
 
@@ -215,7 +258,13 @@ cs2-link-manager/
   examples/          # example profiles and plugin package
   pyproject.toml
   README.md
+  CONTRIBUTING.md
 ```
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, test
+instructions, and pull request guidelines.
 
 ## License
 

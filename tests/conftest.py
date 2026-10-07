@@ -11,6 +11,21 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from cs2lm.config import default_config, save_config  # noqa: E402
 
 
+GAMEINFO_GI = """\
+"GameInfo"
+{
+	FileSystem
+	{
+		SearchPaths
+		{
+			Game	csgo
+			Game	csgo/addons/metamod
+		}
+	}
+}
+"""
+
+
 def make_server(tmp_path: Path) -> Path:
     server = tmp_path / "server"
     dirs = [
@@ -22,6 +37,21 @@ def make_server(tmp_path: Path) -> Path:
     ]
     for d in dirs:
         (server / d).mkdir(parents=True, exist_ok=True)
+
+    # A realistic server layout: engine config with Metamod wired in,
+    # Metamod native binaries + CounterStrikeSharp loader vdf, and CSS API.
+    (server / "game" / "csgo" / "gameinfo.gi").write_text(GAMEINFO_GI, encoding="utf-8")
+    (server / "game" / "csgo" / "addons" / "metamod" / "bin" / "linux64").mkdir(parents=True, exist_ok=True)
+    (server / "game" / "csgo" / "addons" / "metamod" / "bin" / "win64").mkdir(parents=True, exist_ok=True)
+    (server / "game" / "csgo" / "addons" / "metamod" / "bin" / "linux64" / "metamod.so").write_bytes(b"\x7fELF")
+    (server / "game" / "csgo" / "addons" / "metamod" / "bin" / "win64" / "metamod.dll").write_bytes(b"MZ")
+    (server / "game" / "csgo" / "addons" / "metamod" / "counterstrikesharp.vdf").write_text(
+        '"Plugin"\n{\n\t"file"\t"counterstrikesharp/bin/linux64/CounterStrikeSharp"\n}\n',
+        encoding="utf-8",
+    )
+    css_api = server / "game" / "csgo" / "addons" / "counterstrikesharp" / "api"
+    css_api.mkdir(parents=True, exist_ok=True)
+    (css_api / "CounterStrikeSharp.API.dll").write_bytes(b"MZ")
     return server
 
 

@@ -64,6 +64,97 @@ def _iter_orphan_links(repo: Path, server: Path, csgo_rel: str):
                     yield child, real
 
 
+def _doctor_core_checks(
+    csgo_dir: Path,
+    addons: Path,
+    issues: list[dict],
+) -> None:
+    """Verify the CS2 server structure and Metamod/CSS wiring.
+
+    These checks are read-only: the doctor never modifies core files. They
+    help a server owner confirm the layout is correct before relying on
+    plugin links.
+    """
+    gameinfo = csgo_dir / "gameinfo.gi"
+    if not gameinfo.is_file():
+        issues.append(
+            {
+                "severity": "error",
+                "code": "missing-gameinfo",
+                "message": f"gameinfo.gi not found at {gameinfo}",
+            }
+        )
+    else:
+        try:
+            text = gameinfo.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            issues.append(
+                {
+                    "severity": "warn",
+                    "code": "unreadable-gameinfo",
+                    "message": f"cannot read {gameinfo}: {exc}",
+                }
+            )
+        else:
+            if "addons/metamod" not in text:
+                issues.append(
+                    {
+                        "severity": "warn",
+                        "code": "metamod-not-in-gameinfo",
+                        "message": (
+                            f"{gameinfo} does not reference 'addons/metamod'; "
+                            "Metamod will not be loaded by the engine. Add "
+                            "'Game csgo/addons/metamod' to the SearchPaths "
+                            "section."
+                        ),
+                    }
+                )
+
+    metamod_dir = addons / "metamod"
+    if metamod_dir.is_dir():
+        linux_bin = metamod_dir / "bin" / "linux64" / "metamod.so"
+        win_bin = metamod_dir / "bin" / "win64" / "metamod.dll"
+        if not linux_bin.exists() and not win_bin.exists():
+            issues.append(
+                {
+                    "severity": "warn",
+                    "code": "missing-metamod-bin",
+                    "message": (
+                        f"no Metamod native binary found under "
+                        f"{metamod_dir / 'bin'} (expected linux64/metamod.so "
+                        "or win64/metamod.dll)"
+                    ),
+                }
+            )
+        if not (metamod_dir / "counterstrikesharp.vdf").is_file():
+            issues.append(
+                {
+                    "severity": "warn",
+                    "code": "missing-css-vdf",
+                    "message": (
+                        "counterstrikesharp.vdf not found under "
+                        f"{metamod_dir}; CounterStrikeSharp will not be "
+                        "loaded by Metamod"
+                    ),
+                }
+            )
+
+    css_dir = addons / "counterstrikesharp"
+    if css_dir.is_dir():
+        api_dll = css_dir / "api" / "CounterStrikeSharp.API.dll"
+        if not api_dll.exists():
+            issues.append(
+                {
+                    "severity": "warn",
+                    "code": "missing-css-api",
+                    "message": (
+                        f"CounterStrikeSharp.API.dll not found at {api_dll}; "
+                        "CSS may be installed incorrectly"
+                    ),
+                }
+            )
+
+
 def run_doctor(repo: str | Path, logger: Logger | None = None) -> list[dict]:
     """Run diagnostics and return a list of issue dicts."""
     logger = logger or Logger()
@@ -110,6 +201,12 @@ def run_doctor(repo: str | Path, logger: Logger | None = None) -> list[dict]:
                 "message": "Metamod not found under addons/metamod",
             }
         )
+
+    # -- core framework / server structure ----------------------------------
+    # These checks confirm the server is laid out correctly and Metamod is
+    # actually wired into the engine. Core files are never modified.
+    if addons.is_dir():
+        _doctor_core_checks(csgo_dir, addons, issues)
 
     # -- managed links ------------------------------------------------------
     for plugin, rec, target, source in _iter_tool_links(repo_path, server, csgo_rel):

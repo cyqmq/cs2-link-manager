@@ -66,3 +66,33 @@ def test_doctor_detects_orphan_link(repo_server, tmp_path):
 
     issues = run_doctor(repo)
     assert "orphan-link" in codes(issues)
+
+
+def test_doctor_detects_missing_gameinfo(repo_server):
+    repo, server = repo_server
+    (server / "game" / "csgo" / "gameinfo.gi").unlink()
+    issues = run_doctor(repo)
+    assert "missing-gameinfo" in codes(issues)
+
+
+def test_doctor_detects_metamod_not_wired(repo_server):
+    repo, server = repo_server
+    gi = server / "game" / "csgo" / "gameinfo.gi"
+    gi.write_text('"GameInfo"\n{\n}\n', encoding="utf-8")
+    issues = run_doctor(repo)
+    assert "metamod-not-in-gameinfo" in codes(issues)
+
+
+def test_doctor_detects_missing_core_files(repo_server):
+    repo, server = repo_server
+    metamod_bin = server / "game" / "csgo" / "addons" / "metamod" / "bin"
+    (metamod_bin / "linux64" / "metamod.so").unlink()
+    (metamod_bin / "win64" / "metamod.dll").unlink()
+    (server / "game" / "csgo" / "addons" / "metamod" / "counterstrikesharp.vdf").unlink()
+    css_api = server / "game" / "csgo" / "addons" / "counterstrikesharp" / "api"
+    (css_api / "CounterStrikeSharp.API.dll").unlink()
+
+    issues = run_doctor(repo)
+    assert "missing-metamod-bin" in codes(issues)
+    assert "missing-css-vdf" in codes(issues)
+    assert "missing-css-api" in codes(issues)

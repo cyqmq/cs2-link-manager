@@ -44,6 +44,15 @@ def test_cli_init_requires_server():
         run(["init"])
 
 
+def test_cli_version(capsys):
+    with pytest.raises(SystemExit) as excinfo:
+        run(["--version"])
+    assert excinfo.value.code == 0
+    captured = capsys.readouterr()
+    assert "cs2lm" in captured.out
+    assert "0.1.0" in captured.out
+
+
 def test_cli_dry_run_install(repo_server, tmp_path):
     repo, server = repo_server
     pkg = make_css_package(tmp_path, "DryRun")
