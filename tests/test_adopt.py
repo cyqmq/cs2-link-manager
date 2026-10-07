@@ -50,6 +50,37 @@ def test_adopt_only(repo_server):
     assert list_plugins(repo) == ["Alpha"]
 
 
+def test_adopt_skips_symlinked_plugins(repo_server, tmp_path):
+    """Plugins managed via symlinks (e.g. by this tool or another repo) must
+    not crash adopt; they are skipped instead."""
+    repo, server = repo_server
+    install_plugin_on_server(server, "Real")
+
+    # A symlink plugin dir pointing outside the server (another repo).
+    external = tmp_path / "external-repo" / "plugins" / "ApiPlugin"
+    external.mkdir(parents=True)
+    (external / "ApiPlugin.dll").write_bytes(b"MZ")
+    plugins_dir = server / "game" / "csgo" / "addons" / "counterstrikesharp" / "plugins"
+    (plugins_dir / "ApiPlugin").symlink_to(external, target_is_directory=True)
+
+    adopted = adopt_css_plugins(repo)
+    assert adopted == ["Real"]
+    assert list_plugins(repo) == ["Real"]
+
+
+def test_find_css_plugins_skips_symlinks(repo_server, tmp_path):
+    repo, server = repo_server
+    install_plugin_on_server(server, "Real")
+    external = tmp_path / "external" / "ApiPlugin"
+    external.mkdir(parents=True)
+    (external / "ApiPlugin.dll").write_bytes(b"MZ")
+    plugins_dir = server / "game" / "csgo" / "addons" / "counterstrikesharp" / "plugins"
+    (plugins_dir / "ApiPlugin").symlink_to(external, target_is_directory=True)
+
+    found = dict(find_css_plugins(repo))
+    assert set(found) == {"Real"}
+
+
 def test_cli_adopt(repo_server, tmp_path):
     repo, server = repo_server
     # a repo plugin that is already tracked must not be adopted twice

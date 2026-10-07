@@ -55,6 +55,34 @@ def test_add_from_pkg(repo_server, tmp_path):
     assert manifest["version"] == "1.0.0"
 
 
+def test_add_from_pkg_uses_cs2pkg_name_when_omitted(repo_server, tmp_path):
+    """cs2lm add --pkg file.cs2pkg uses cs2pkg.json's name when no name is given."""
+    src_repo, _server = repo_server
+    add_plugin(src_repo, "PkgPlugin", make_css_package(tmp_path, "PkgPlugin"))
+    pkg_path = build_pkg(src_repo, "PkgPlugin", tmp_path / "dist")
+
+    target_repo = init_repo(tmp_path, repo_name="target")
+    rc = cli.main(["--repo", str(target_repo), "add", "--pkg", str(pkg_path)])
+    assert rc == 0
+    assert "PkgPlugin" in list_plugins(target_repo)
+
+
+def test_add_from_pkg_renames_internal_dir_to_cli_name(repo_server, tmp_path):
+    """cs2lm add MyName --pkg where the package contains DemoPlugin must link as MyName."""
+    src_repo, _server = repo_server
+    add_plugin(src_repo, "DemoPlugin", make_css_package(tmp_path, "DemoPlugin"))
+    pkg_path = build_pkg(src_repo, "DemoPlugin", tmp_path / "dist")
+
+    target_repo = init_repo(tmp_path, repo_name="target")
+    rc = cli.main(["--repo", str(target_repo), "add", "MyName", "--pkg", str(pkg_path)])
+    assert rc == 0
+    manifest = load_manifest(target_repo, "MyName")
+    assert manifest["name"] == "MyName"
+    targets = {f["target"] for f in manifest["files"]}
+    assert any("plugins/MyName/" in t for t in targets)
+    assert not any("plugins/DemoPlugin" in t for t in targets)
+
+
 def test_cli_pack(repo_server, tmp_path, capsys):
     repo, _server = repo_server
     add_plugin(repo, "PackMe", make_css_package(tmp_path, "PackMe"))

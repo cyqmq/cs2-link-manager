@@ -15,6 +15,32 @@ from cs2lm.paths import resolve_within
 STATE_REL = "state/links.json"
 
 
+def _version_tuple(version: str) -> tuple[int, ...]:
+    """Parse ``major.minor.build.revision`` into a tuple of ints."""
+    parts: list[int] = []
+    for part in version.split("."):
+        try:
+            parts.append(int(part))
+        except ValueError:
+            parts.append(0)
+    return tuple(parts)
+
+
+def _versions_equal(a: str, b: str) -> bool:
+    """Compare .NET assembly versions, ignoring trailing zero parts.
+
+    CSS releases are usually three-part (``1.0.376``) while the .NET
+    assembly version of ``CounterStrikeSharp.API.dll`` is four-part
+    (``1.0.376.0``). A plain string comparison would false-positive.
+    """
+    ta = _version_tuple(a)
+    tb = _version_tuple(b)
+    width = max(len(ta), len(tb))
+    ta += (0,) * (width - len(ta))
+    tb += (0,) * (width - len(tb))
+    return ta == tb
+
+
 def load_state(repo: str | Path) -> dict:
     p = Path(repo) / STATE_REL
     if p.exists():
@@ -113,17 +139,26 @@ def _doctor_core_checks(
 
     metamod_dir = addons / "metamod"
     if metamod_dir.is_dir():
-        linux_bin = metamod_dir / "bin" / "linux64" / "metamod.so"
-        win_bin = metamod_dir / "bin" / "win64" / "metamod.dll"
-        if not linux_bin.exists() and not win_bin.exists():
+        # CS2 loads Metamod from bin/linuxsteamrt64/metamod.2.cs2.so on
+        # Linux and bin/win64/metamod.2.cs2.dll on Windows. Use a glob so a
+        # future naming change does not cause false warnings.
+        native_bins = [
+            p
+            for p in (metamod_dir / "bin").rglob("*")
+            if p.is_file()
+            and p.suffix.lower() in (".so", ".dll")
+            and "metamod" in p.name.lower()
+        ]
+        if not native_bins:
             issues.append(
                 {
                     "severity": "warn",
                     "code": "missing-metamod-bin",
                     "message": (
                         f"no Metamod native binary found under "
-                        f"{metamod_dir / 'bin'} (expected linux64/metamod.so "
-                        "or win64/metamod.dll)"
+                        f"{metamod_dir / 'bin'} (expected "
+                        "linuxsteamrt64/metamod.2.cs2.so or "
+                        "win64/metamod.2.cs2.dll)"
                     ),
                 }
             )
@@ -330,7 +365,7 @@ def run_doctor(repo: str | Path, logger: Logger | None = None) -> list[dict]:
                     ),
                 }
             )
-        elif server_ver != api_ver:
+        elif not _versions_equal(server_ver, api_ver):
             issues.append(
                 {
                     "severity": "warn",

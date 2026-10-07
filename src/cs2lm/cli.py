@@ -47,7 +47,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_init.add_argument("--server", required=True, help="CS2 server directory")
 
     p_add = sub.add_parser("add", help="Add a plugin package to the repository")
-    p_add.add_argument("name", help="Plugin name")
+    p_add.add_argument("name", nargs="?", help="Plugin name (required unless --pkg provides one)")
     p_add.add_argument(
         "path",
         nargs="?",
@@ -66,7 +66,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_install.add_argument("name")
     p_install.add_argument("--backup", action="store_true", help="Back up conflicting targets")
     p_install.add_argument("--force", action="store_true", help="Force install with confirmation")
-    p_install.add_argument("--yes", action="store_true", help="Skip confirmation with --force")
+    p_install.add_argument("--yes", action="store_true", help="Skip confirmation when using --backup")
 
     p_uninstall = sub.add_parser("uninstall", help="Uninstall a plugin (remove links)")
     p_uninstall.add_argument("name")
@@ -107,6 +107,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_web = sub.add_parser("web", help="Start a local web UI to browse and toggle plugins")
     p_web.add_argument("--host", default="127.0.0.1", help="Bind address (default: 127.0.0.1)")
     p_web.add_argument("--port", type=int, default=8080, help="Port (default: 8080)")
+    p_web.add_argument(
+        "--auth-token",
+        default=None,
+        help="Require this token to view and toggle plugins (recommended when binding a non-loopback host)",
+    )
 
     return parser
 
@@ -153,6 +158,8 @@ def cmd_add(args: argparse.Namespace, logger: Logger) -> int:
                 source = download_and_extract(args.url, tmp)
             except DownloadError as exc:
                 raise ValueError(str(exc)) from exc
+            if not args.name:
+                raise ValueError("A plugin name is required when adding from a URL.")
             manifest = add_plugin(
                 args.repo,
                 args.name,
@@ -165,14 +172,21 @@ def cmd_add(args: argparse.Namespace, logger: Logger) -> int:
             source, meta = extract_pkg(args.pkg, tmp)
             type_hint = args.type or (meta or {}).get("plugin_type")
             version = args.version or (meta or {}).get("version")
+            plugin_name = args.name or (meta or {}).get("name")
+            if not plugin_name:
+                raise ValueError(
+                    "No plugin name given and cs2pkg.json does not provide one."
+                )
             manifest = add_plugin(
                 args.repo,
-                args.name,
+                plugin_name,
                 source,
                 type_hint=type_hint,
                 version=version,
             )
     else:
+        if not args.name:
+            raise ValueError("A plugin name is required when adding from a local path.")
         manifest = add_plugin(
             args.repo,
             args.name,
@@ -182,7 +196,7 @@ def cmd_add(args: argparse.Namespace, logger: Logger) -> int:
         )
     logger.info(
         "add",
-        f"added plugin '{args.name}'",
+        f"added plugin '{manifest['name']}'",
         type=manifest["plugin_type"],
         files=len(manifest["files"]),
         links=len(manifest["links"]),
@@ -308,7 +322,13 @@ def cmd_adopt(args: argparse.Namespace, logger: Logger) -> int:
 def cmd_web(args: argparse.Namespace, logger: Logger) -> int:
     from cs2lm.webui import run_webui
 
-    run_webui(args.repo, host=args.host, port=args.port)
+    if args.host not in ("127.0.0.1", "localhost", "::1") and not args.auth_token:
+        print(
+            f"WARNING: binding web UI to {args.host} without --auth-token "
+            "exposes it to the network with no authentication. Use "
+            "--auth-token to protect it."
+        )
+    run_webui(args.repo, host=args.host, port=args.port, auth_token=args.auth_token)
     return 0
 
 

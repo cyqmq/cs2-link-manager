@@ -120,6 +120,7 @@ def classify_plugin(source: str | Path, type_hint: str | None = None) -> str:
 def _copy_css_source(source: Path, name: str, files_root: Path) -> None:
     if source.is_dir() and (source / "addons").is_dir():
         shutil.copytree(source / "addons", files_root / "addons")
+        _normalize_css_plugin_dirs(files_root, name)
     else:
         dest = files_root / "addons" / "counterstrikesharp" / "plugins" / name
         if source.is_dir():
@@ -127,6 +128,55 @@ def _copy_css_source(source: Path, name: str, files_root: Path) -> None:
         else:
             dest.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, dest / source.name)
+
+
+def _rename_css_entries(css: Path, old: str, new: str) -> None:
+    """Rename plugin-specific entries from ``old`` to ``new``.
+
+    Covers the standard CSS plugin locations that
+    :func:`_collect_css_links` scans: ``plugins/``, ``configs/plugins/``,
+    ``configs/``, ``lang/``, ``gamedata/`` and ``gamedata/plugins/``.
+    """
+    roots = [
+        css / "plugins",
+        css / "configs" / "plugins",
+        css / "configs",
+        css / "lang",
+        css / "gamedata",
+        css / "gamedata" / "plugins",
+    ]
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for child in sorted(root.iterdir()):
+            if child.name == old or child.name.startswith(old + "."):
+                child.rename(root / (new + child.name[len(old):]))
+
+
+def _normalize_css_plugin_dirs(files_root: Path, name: str) -> None:
+    """Rename the plugin directories inside a copied ``addons/`` tree to ``name``.
+
+    A package may ship as ``addons/counterstrikesharp/plugins/DemoPlugin/``
+    while the user adds it as ``cs2lm add Renamed ./DemoPlugin/``. Without
+    normalization the manifest is stored as ``Renamed`` but links point at
+    ``plugins/DemoPlugin``, which breaks install/uninstall and profile
+    switching. When exactly one plugin directory is present, it (and its
+    matching configs/lang/gamedata entries) are renamed to the repository
+    name.
+    """
+    css = files_root / "addons" / "counterstrikesharp"
+    if not css.is_dir():
+        return
+    plugins_dir = css / "plugins"
+    if not plugins_dir.is_dir():
+        return
+    plugin_dirs = [p for p in plugins_dir.iterdir() if p.is_dir()]
+    if len(plugin_dirs) != 1:
+        return  # Multiple plugin dirs: package layout wins, cannot rename.
+    old_name = plugin_dirs[0].name
+    if old_name == name or not old_name:
+        return
+    _rename_css_entries(css, old_name, name)
 
 
 def _copy_metamod_source(source: Path, name: str, files_root: Path) -> None:

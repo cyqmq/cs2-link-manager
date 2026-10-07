@@ -52,6 +52,20 @@ def test_install_is_idempotent(repo_server, tmp_path):
     assert len(records) == 2
 
 
+def test_install_uses_repo_name_not_internal_pkg_dir(repo_server, tmp_path):
+    """install links to plugins/<repo-name>, never the package's internal dir."""
+    repo, server = repo_server
+    pkg = make_css_package(tmp_path, "DemoPlugin")
+    add_plugin(repo, "Renamed", pkg)
+    manager = make_manager(repo)
+    manager.install("Renamed")
+
+    assert linking.path_exists(plugin_path(server, "Renamed"))
+    assert not linking.path_exists(plugin_path(server, "DemoPlugin"))
+    manager.uninstall("Renamed")
+    assert not linking.path_exists(plugin_path(server, "Renamed"))
+
+
 def test_uninstall_removes_link_keeps_repo(repo_server, tmp_path):
     repo, server = repo_server
     pkg = make_css_package(tmp_path, "TestPlugin")

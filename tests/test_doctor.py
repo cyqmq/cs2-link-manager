@@ -24,6 +24,10 @@ def test_doctor_clean(repo_server, tmp_path):
     assert "broken-link" not in codes(issues)
     assert "conflict" not in codes(issues)
     assert "orphan-link" not in codes(issues)
+    # Correct CS2 Metamod layout must not produce a false warning.
+    assert "missing-metamod-bin" not in codes(issues)
+    assert "missing-css-vdf" not in codes(issues)
+    assert "missing-css-api" not in codes(issues)
 
 
 def test_doctor_detects_broken_link(repo_server, tmp_path):
@@ -88,8 +92,8 @@ def test_doctor_detects_metamod_not_wired(repo_server):
 def test_doctor_detects_missing_core_files(repo_server):
     repo, server = repo_server
     metamod_bin = server / "game" / "csgo" / "addons" / "metamod" / "bin"
-    (metamod_bin / "linux64" / "metamod.so").unlink()
-    (metamod_bin / "win64" / "metamod.dll").unlink()
+    (metamod_bin / "linuxsteamrt64" / "metamod.2.cs2.so").unlink()
+    (metamod_bin / "win64" / "metamod.2.cs2.dll").unlink()
     (server / "game" / "csgo" / "addons" / "metamod" / "counterstrikesharp.vdf").unlink()
     css_api = server / "game" / "csgo" / "addons" / "counterstrikesharp" / "api"
     (css_api / "CounterStrikeSharp.API.dll").unlink()
@@ -133,6 +137,35 @@ def test_doctor_api_version_match(repo_server, tmp_path, monkeypatch):
     issues = run_doctor(repo)
     assert "api-version-mismatch" not in codes(issues)
     assert "api-version-unverifiable" not in codes(issues)
+
+
+def test_doctor_api_version_three_part_matches_four_part(repo_server, tmp_path, monkeypatch):
+    """CSS declares 1.0.376; the .NET assembly version is 1.0.376.0.
+
+    A naive string comparison would report a mismatch; the normalized
+    comparison must treat them as equal.
+    """
+    repo, _server = repo_server
+    pkg = make_css_package_with_api(tmp_path, "ApiPlugin", "1.0.376")
+    add_plugin(repo, "ApiPlugin", pkg)
+    PluginManager(repo).install("ApiPlugin")
+
+    monkeypatch.setattr(doctor_mod, "read_dotnet_assembly_version", lambda _p: "1.0.376.0")
+    issues = run_doctor(repo)
+    assert "api-version-mismatch" not in codes(issues)
+    assert "api-version-unverifiable" not in codes(issues)
+
+
+def test_doctor_api_version_mismatch_four_part(repo_server, tmp_path, monkeypatch):
+    """A real version difference is still reported after normalization."""
+    repo, _server = repo_server
+    pkg = make_css_package_with_api(tmp_path, "ApiPlugin", "1.0.376")
+    add_plugin(repo, "ApiPlugin", pkg)
+    PluginManager(repo).install("ApiPlugin")
+
+    monkeypatch.setattr(doctor_mod, "read_dotnet_assembly_version", lambda _p: "1.0.377.0")
+    issues = run_doctor(repo)
+    assert "api-version-mismatch" in codes(issues)
 
 
 def test_doctor_api_version_unverifiable(repo_server, tmp_path, monkeypatch):

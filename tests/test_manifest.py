@@ -35,6 +35,34 @@ def test_add_css_package_with_addons_tree(repo_server, tmp_path):
     assert all(l["kind"] == "symlink-dir" for l in manifest["links"])
 
 
+def test_add_renames_internal_plugin_dir_to_given_name(repo_server, tmp_path):
+    """cs2lm add Renamed ./DemoPlugin/ must link as plugins/Renamed.
+
+    The package contains addons/counterstrikesharp/plugins/DemoPlugin but the
+    user gives the repository name Renamed; install/uninstall and profiles
+    must operate on Renamed, not DemoPlugin.
+    """
+    repo, _server = repo_server
+    pkg = make_css_package(tmp_path, "DemoPlugin")
+    manifest = add_plugin(repo, "Renamed", pkg)
+
+    assert manifest["name"] == "Renamed"
+    # The plugin directory is stored under the new name (files inside keep
+    # their original names; renaming binaries could break the plugin).
+    file_sources = {f["source"] for f in manifest["files"]}
+    assert any("plugins/Renamed/" in s for s in file_sources)
+    assert not any("plugins/DemoPlugin" in s for s in file_sources)
+    # Targets use the new directory name.
+    targets = {f["target"] for f in manifest["files"]}
+    assert any("plugins/Renamed/" in t for t in targets)
+    assert not any("plugins/DemoPlugin" in t for t in targets)
+    # Links point at the new name.
+    link_targets = {l["target"] for l in manifest["links"]}
+    assert "game/csgo/addons/counterstrikesharp/plugins/Renamed" in link_targets
+    assert "game/csgo/addons/counterstrikesharp/configs/plugins/Renamed" in link_targets
+    assert not any("DemoPlugin" in t for t in link_targets)
+
+
 def test_add_css_plugin_folder_without_addons(repo_server, tmp_path):
     repo, _server = repo_server
     pkg = tmp_path / "Hello"

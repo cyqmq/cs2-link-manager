@@ -28,7 +28,7 @@ def _toggle_plugin(repo: str | Path, name: str, action: str) -> None:
         raise ValueError(f"Unknown action: {action}")
 
 
-def _render_page(repo: str | Path, error: str = "") -> str:
+def _render_page(repo: str | Path, error: str = "", auth_token: str | None = None) -> str:
     rows = _plugin_rows(repo)
     rows_html = []
     for r in rows:
@@ -37,6 +37,11 @@ def _render_page(repo: str | Path, error: str = "") -> str:
         installed = "yes" if r["installed"] else "no"
         action = "disable" if r["enabled"] else "enable"
         label = "Disable" if r["enabled"] else "Enable"
+        token_field = (
+            f"<input type='hidden' name='token' value='{html.escape(auth_token)}'>"
+            if auth_token
+            else ""
+        )
         rows_html.append(
             f"<tr>"
             f"<td>{name}</td>"
@@ -45,6 +50,7 @@ def _render_page(repo: str | Path, error: str = "") -> str:
             f"<td>{enabled}</td>"
             f"<td>{installed}</td>"
             f"<td><form method='post' action='/toggle'>"
+            f"{token_field}"
             f"<input type='hidden' name='plugin' value='{name}'>"
             f"<input type='hidden' name='action' value='{action}'>"
             f"<button type='submit'>{label}</button>"
@@ -79,14 +85,47 @@ def _render_page(repo: str | Path, error: str = "") -> str:
 """
 
 
+def _render_login() -> str:
+    return """<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>cs2-link-manager - auth required</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 2rem; }
+    input[type=password] { padding: 0.4rem; }
+    button { cursor: pointer; padding: 0.4rem 1rem; }
+  </style>
+</head>
+<body>
+  <h1>cs2-link-manager</h1>
+  <form method="get" action="/">
+    <label>Token: <input type="password" name="token"></label>
+    <button type="submit">Unlock</button>
+  </form>
+</body>
+</html>
+"""
+
+
 class _Handler(BaseHTTPRequestHandler):
     """HTTP handler bound to the server instance holding ``repo``."""
 
+    def _authorized(self, token: str | None) -> bool:
+        required = getattr(self.server, "auth_token", None)
+        return not required or token == required
+
     def do_GET(self):  # noqa: N802
-        if urllib.parse.urlparse(self.path).path != "/":
+        parsed = urllib.parse.urlparse(self.path)
+        if parsed.path != "/":
             self.send_error(404, "Not Found")
             return
-        self._send_html(_render_page(self.server.repo))
+        qs = urllib.parse.parse_qs(parsed.query)
+        token = (qs.get("token") or [""])[0]
+        if not self._authorized(token):
+            self._send_html(_render_login(), status=401)
+            return
+        self._send_html(_render_page(self.server.repo, auth_token=getattr(self.server, "auth_token", None)))
 
     def do_POST(self):  # noqa: N802
         parsed = urllib.parse.urlparse(self.path)
@@ -98,16 +137,28 @@ class _Handler(BaseHTTPRequestHandler):
         form = urllib.parse.parse_qs(body)
         name = (form.get("plugin") or [""])[0]
         action = (form.get("action") or [""])[0]
+        token = (form.get("token") or [""])[0]
+        if not self._authorized(token):
+            self._send_html(_render_login(), status=401)
+            return
         try:
             _toggle_plugin(self.server.repo, name, action)
         except Exception as exc:  # noqa: BLE001 - surface to the page
             self._send_html(
-                _render_page(self.server.repo, error=str(exc)),
+                _render_page(
+                    self.server.repo,
+                    error=str(exc),
+                    auth_token=getattr(self.server, "auth_token", None),
+                ),
                 status=400,
             )
             return
         self.send_response(303)
-        self.send_header("Location", "/")
+        location = "/"
+        auth = getattr(self.server, "auth_token", None)
+        if auth:
+            location = f"/?token={urllib.parse.quote(auth)}"
+        self.send_header("Location", location)
         self.end_headers()
 
     def _send_html(self, page: str, status: int = 200) -> None:
@@ -120,11 +171,14 @@ class _Handler(BaseHTTPRequestHandler):
         pass
 
 
-def run_webui(repo: str | Path, host: str = "127.0.0.1", port: int = 8080) -> None:
+def run_webui(repo: str | Path, host: str = "127.0.0.1", port: int = 8080, auth_token: str | None = None) -> None:
     """Start the web UI. Blocks until interrupted (Ctrl+C)."""
     server = ThreadingHTTPServer((host, port), _Handler)
     server.repo = str(Path(repo).resolve())
+    server.auth_token = auth_token
     print(f"cs2-link-manager Web UI at http://{host}:{port}/  (Ctrl+C to stop)")
+    if auth_token:
+        print("Authentication required (--auth-token).")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

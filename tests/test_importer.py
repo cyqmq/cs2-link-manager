@@ -36,3 +36,16 @@ def test_import_requires_path_inside_server(repo_server, tmp_path):
     (outside / "X.dll").write_bytes(b"MZ")
     with pytest.raises(ValueError, match="inside the server directory"):
         importer.import_plugin(repo, "X", outside)
+
+
+def test_import_rejects_symlink_with_clear_message(repo_server, tmp_path):
+    repo, server = repo_server
+    external = tmp_path / "external" / "ApiPlugin"
+    external.mkdir(parents=True)
+    (external / "ApiPlugin.dll").write_bytes(b"MZ")
+    plugins_dir = server / "game" / "csgo" / "addons" / "counterstrikesharp" / "plugins"
+    link = plugins_dir / "ApiPlugin"
+    link.symlink_to(external, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="symlink"):
+        importer.import_plugin(repo, "ApiPlugin", link)

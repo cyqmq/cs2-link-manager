@@ -78,7 +78,7 @@ cs2lm profile use competitive
 | 命令 | 说明 |
 | --- | --- |
 | `init --server <dir>` | 创建仓库骨架和 `config.json`。 |
-| `add <name> <path>` / `add <name> --url <zip-url>` / `add <name> --pkg <file.cs2pkg>` | 把插件包（本地目录、下载的 zip 或 `.cs2pkg`）复制进仓库，生成 `manifest.json`。 |
+| `add <name> <path>` / `add <name> --url <zip-url>` / `add [<name>] --pkg <file.cs2pkg>` | 把插件包（本地目录、下载的 zip 或 `.cs2pkg`）复制进仓库，生成 `manifest.json`；`--pkg` 省略名字时用 `cs2pkg.json` 的 `name`。 |
 | `pack <name> [--out <dir>]` | 把仓库插件打包成 `.cs2pkg` 文件。 |
 | `install <name>` | 按 manifest 创建链接（幂等）。 |
 | `uninstall <name>` | 删除工具创建的链接，保留仓库文件。 |
@@ -90,7 +90,7 @@ cs2lm profile use competitive
 | `doctor` | 检查服务器结构、断链、缺失目标、权限、冲突、CSS API 版本依赖。 |
 | `import <name> <path-in-server>` | 把服务器上指定路径的单个插件反向导入仓库。 |
 | `adopt [--plugin <name>]` | 扫描服务器上已有的 CSS 插件，批量导入仓库。 |
-| `web [--host H] [--port P]` | 启动本地 Web UI，浏览并切换插件。 |
+| `web [--host H] [--port P] [--auth-token T]` | 启动本地 Web UI，浏览并切换插件；设置令牌后需要认证。 |
 
 全局选项：`--repo <path>`（默认 `plugins-repo` 或 `$CS2LM_REPO`）、
 `--dry-run`、`--log <file>`、`--log-format text|json`、`--verbose`、
@@ -292,6 +292,12 @@ API 版本直接从
 cs2lm add MyPlugin --pkg ./MyPlugin.cs2pkg
 ```
 
+省略 `name` 参数时，工具会自动使用 `cs2pkg.json` 里的 `name`：
+
+```bash
+cs2lm add --pkg ./MyPlugin.cs2pkg   # 等效于上面那条命令
+```
+
 仓库中的插件也可以导出为该格式：
 
 ```bash
@@ -301,6 +307,11 @@ cs2lm pack MyPlugin --out ./releases/
 
 该格式复用了现有的 manifest/链接生成流程：`add --pkg` 之后，插件会被存储
 在仓库中，并像其他插件一样用符号链接管理。
+
+**关于插件目录名**：`add` 时提供的名称就是仓库名和服务器上的插件目录名。
+即使包内部目录叫别的名字（例如 zip 里是 `DemoPlugin`，你写成
+`cs2lm add Renamed ./DemoPlugin/`），工具也会把插件目录统一重命名为
+`Renamed`，保证安装/卸载/profile 切换不会错乱。
 
 ## 接管已有插件（adopt）
 
@@ -330,6 +341,12 @@ cs2lm install SimpleAdmin --backup
 
 使用 `--plugin <name>` 只接管单个插件。已在仓库中的插件会跳过。
 
+如果服务器上某个插件目录是**符号链接**（例如已经被本工具或其他仓库管理），
+`adopt` 会跳过它并提示，而不会解析到仓库外部或中断整个扫描。
+
+`import` 遇到符号链接路径时会拒绝并给出明确提示（该路径可能已被本工具或
+其他仓库管理）——请先删除符号链接，再指向真实的插件目录重试。
+
 ## Web UI
 
 为喜欢用浏览器的服主提供了一个小型可读写 Web 界面：
@@ -347,6 +364,16 @@ cs2lm web --port 8080
 ssh -L 8080:127.0.0.1:8080 user@server-host
 # 然后在本地打开 http://127.0.0.1:8080/
 ```
+
+绑定非回环地址（`--host 0.0.0.0` 等）时工具会打印警告。需要基础认证时，
+用 `--auth-token` 设置共享令牌：
+
+```bash
+cs2lm web --host 0.0.0.0 --port 8080 --auth-token my-secret
+# 访问 http://<host>:8080/?token=my-secret （页面上会显示令牌输入框）
+```
+
+设置了令牌后，所有页面和开关操作都必须携带该令牌。
 
 ## 测试
 
@@ -366,6 +393,9 @@ pytest
   `CounterStrikeSharp.API.dll` 的程序集版本。如果 DLL 无法解析，`doctor`
   会提示手动核对。
 * Metamod 插件支持是尽力而为；主要支持的类型是 CounterStrikeSharp。
+  在 Windows 上，Metamod 插件和 CSS 插件都是 `.dll` 文件，`classify_plugin`
+  无法仅凭扩展名区分——单文件 `.dll` 默认按 CSS 处理，Metamod 插件请提供
+  `addons/` 树或 `.vdf` 文件（这两种结构会被正确识别为 Metamod）。
 * `gamedata/gamedata.json` 无法管理（框架共享文件）；此类改动请手动合并。
 * 插件目录中运行时写入的文件（例如插件生成的配置）在使用符号链接时会
   保留在仓库副本中；使用复制回退时，会随副本一起被删除。

@@ -8,14 +8,21 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from cs2lm import linking
 from cs2lm.config import load_config
 from cs2lm.importer import import_plugin
 from cs2lm.logutil import Logger
 from cs2lm.manifest import list_plugins
 
 
-def find_css_plugins(repo: str | Path) -> list[tuple[str, Path]]:
-    """Return ``(name, path)`` for every CSS plugin directory on the server."""
+def find_css_plugins(repo: str | Path, logger: Logger | None = None) -> list[tuple[str, Path]]:
+    """Return ``(name, path)`` for every real CSS plugin directory on the server.
+
+    Symbolic links / junctions are skipped: they are usually managed by this
+    tool or by another repository, and importing through a symlink would
+    resolve outside the server directory.
+    """
+    logger = logger or Logger()
     cfg = load_config(repo)
     server = Path(cfg["server_path"]).resolve()
     csgo_rel = cfg["csgo_rel"]
@@ -24,6 +31,13 @@ def find_css_plugins(repo: str | Path) -> list[tuple[str, Path]]:
         return []
     found: list[tuple[str, Path]] = []
     for child in sorted(plugins_dir.iterdir()):
+        if child.is_symlink() or linking.is_junction(child):
+            logger.info(
+                "adopt",
+                f"skipping symlinked plugin directory (likely managed by "
+                f"another repository): {child.name}",
+            )
+            continue
         if not child.is_dir():
             continue
         if list(child.glob("*.dll")) or list(child.glob("*.deps.json")):
@@ -44,7 +58,7 @@ def adopt_css_plugins(
     logger = logger or Logger()
     existing = set(list_plugins(repo))
     adopted: list[str] = []
-    for name, path in find_css_plugins(repo):
+    for name, path in find_css_plugins(repo, logger=logger):
         if only and name != only:
             continue
         if name in existing:

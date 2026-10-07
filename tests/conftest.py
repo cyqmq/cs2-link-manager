@@ -40,11 +40,13 @@ def make_server(tmp_path: Path) -> Path:
 
     # A realistic server layout: engine config with Metamod wired in,
     # Metamod native binaries + CounterStrikeSharp loader vdf, and CSS API.
+    # CS2 loads Metamod from bin/linuxsteamrt64/metamod.2.cs2.so (Linux)
+    # and bin/win64/metamod.2.cs2.dll (Windows).
     (server / "game" / "csgo" / "gameinfo.gi").write_text(GAMEINFO_GI, encoding="utf-8")
-    (server / "game" / "csgo" / "addons" / "metamod" / "bin" / "linux64").mkdir(parents=True, exist_ok=True)
+    (server / "game" / "csgo" / "addons" / "metamod" / "bin" / "linuxsteamrt64").mkdir(parents=True, exist_ok=True)
     (server / "game" / "csgo" / "addons" / "metamod" / "bin" / "win64").mkdir(parents=True, exist_ok=True)
-    (server / "game" / "csgo" / "addons" / "metamod" / "bin" / "linux64" / "metamod.so").write_bytes(b"\x7fELF")
-    (server / "game" / "csgo" / "addons" / "metamod" / "bin" / "win64" / "metamod.dll").write_bytes(b"MZ")
+    (server / "game" / "csgo" / "addons" / "metamod" / "bin" / "linuxsteamrt64" / "metamod.2.cs2.so").write_bytes(b"\x7fELF")
+    (server / "game" / "csgo" / "addons" / "metamod" / "bin" / "win64" / "metamod.2.cs2.dll").write_bytes(b"MZ")
     (server / "game" / "csgo" / "addons" / "metamod" / "counterstrikesharp.vdf").write_text(
         '"Plugin"\n{\n\t"file"\t"counterstrikesharp/bin/linux64/CounterStrikeSharp"\n}\n',
         encoding="utf-8",

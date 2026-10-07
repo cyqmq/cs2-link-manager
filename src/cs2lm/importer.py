@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from cs2lm import linking
 from cs2lm.config import load_config
 from cs2lm.logutil import Logger
 from cs2lm.manifest import add_plugin, load_manifest, save_manifest
@@ -27,10 +28,18 @@ def import_plugin(
     logger = logger or Logger()
     cfg = load_config(repo)
     server = Path(cfg["server_path"]).resolve()
-    source = Path(source_path).expanduser().resolve()
+    raw_source = Path(source_path).expanduser()
+    source = raw_source.resolve()
 
     if not source.exists():
         raise FileNotFoundError(f"Source not found: {source}")
+    if raw_source.is_symlink() or linking.is_junction(raw_source):
+        raise ValueError(
+            f"{raw_source} is a symlink (it resolves to {source}) and is "
+            "likely already managed by this tool or another repository. "
+            "Remove the symlink and re-run import, or point to the real "
+            "plugin directory inside the server."
+        )
     if not is_relative_to(source, server):
         raise ValueError(
             f"Source path must be inside the server directory ({server}): {source}"
