@@ -179,3 +179,32 @@ this project fills.
   directories (the underlying repo files remain, but runtime-generated files
   inside the *server-side* target are removed if using copy fallback; with
   symlinks they remain in the repo copy and persist).
+
+## 7. Implementation plan (as executed)
+
+1. **Project skeleton**: Python 3.11+ package with `src/` layout,
+   `pyproject.toml`, `cs2lm` console script, `python -m cs2lm` entry point.
+2. **Core modules**:
+   - `paths.py` — server-root-relative path validation (does not follow
+     symlinks so managed links pointing at the repo are not treated as
+     escapes).
+   - `config.py` — JSON repository config (`repo_path`, `server_path`,
+     `csgo_rel`).
+   - `manifest.py` — plugin type detection, copying packages into the repo,
+     generating `manifest.json` (files + links + ini_lines), core-file
+     overwrite guard.
+   - `linking.py` — symlink/junction/copy creation, safe removal, backups.
+   - `installer.py` — install/uninstall/enable/disable orchestration,
+     state database (`state/links.json`), rollback, `metaplugins.ini` edits.
+   - `profiles.py` — named plugin sets and switching.
+   - `doctor.py` — broken links, missing sources, conflicts, orphans,
+     permissions.
+   - `importer.py` — reverse import from a server.
+   - `cli.py` — argparse CLI with `--dry-run`, `--backup`, `--force`,
+     text/JSON logging.
+3. **Tests**: pytest suite using temporary directories simulating a CS2
+   server; covers paths, manifests, installer (incl. conflict/backup/dry-run),
+   profiles, doctor, importer, Metamod ini handling, and CLI end-to-end.
+4. **Docs**: `docs/research.md`, `README.md`, example profiles and a demo
+   plugin package.
+5. **Git**: committed with descriptive messages.

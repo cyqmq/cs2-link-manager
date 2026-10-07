@@ -79,8 +79,12 @@ def use_profile(
 
     enabled_count = 0
     disabled_count = 0
+    all_plugins_set = set(all_plugins)
 
     for plugin in profile["plugins"]:
+        if plugin not in all_plugins_set:
+            logger.warn("profile", f"plugin in profile no longer exists: {plugin}")
+            continue
         manifest = load_manifest(repo, plugin)
         if not manifest.get("enabled"):
             manager.enable(plugin)
