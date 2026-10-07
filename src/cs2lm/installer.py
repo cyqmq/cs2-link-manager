@@ -160,8 +160,10 @@ class PluginManager:
             f"target already exists and is not managed by this tool: {target}"
         )
         if self.backup or self.force:
-            if self.force and not self.yes and not self._confirm():
-                raise linking.ConflictError("Aborted by user (--force requires confirmation).")
+            if not self.yes and not self._confirm():
+                raise linking.ConflictError(
+                    "Aborted by user. Use --yes to skip confirmation."
+                )
             linking.backup_target(
                 target,
                 self.backup_root,
@@ -177,7 +179,7 @@ class PluginManager:
     def _confirm(self) -> bool:
         try:
             answer = input("Target is unmanaged. Move it to backup and continue? [y/N] ")
-        except EOFError:
+        except (EOFError, OSError):
             return False
         return answer.strip().lower() in ("y", "yes")
 

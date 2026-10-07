@@ -80,15 +80,15 @@ cs2lm profile use competitive
 | Command | Description |
 | --- | --- |
 | `init --server <dir>` | Create repository skeleton and `config.json`. |
-| `add <name> <path>` | Copy a plugin package into the repo, generate `manifest.json`. |
+| `add <name> <path>` / `add <name> --url <zip-url>` | Copy a plugin package (local or downloaded zip) into the repo, generate `manifest.json`. |
 | `install <name>` | Create links defined by the manifest (idempotent). |
 | `uninstall <name>` | Remove tool-created links; keep repo files. |
 | `enable <name>` / `disable <name>` | Create/remove links (same as install/uninstall). |
 | `list` | Show name, type, version, enabled, installed status. |
 | `profile create <name> [plugins...]` | Create a named profile. |
-| `profile use <name>` | Enable profile plugins, disable all others. |
+| `profile use <name>` | Enable profile plugins, disable all others, and print a diff report. |
 | `profile list` / `profile delete <name>` | List / delete profiles. |
-| `doctor` | Check broken links, missing targets, permissions, conflicts. |
+| `doctor` | Check server structure, broken links, missing targets, permissions, conflicts, CSS API version dependencies. |
 | `import <name> <path-in-server>` | Reverse-import a plugin already on the server. |
 
 Global options: `--repo <path>` (default `plugins-repo`, or `$CS2LM_REPO`),
@@ -153,9 +153,10 @@ requirements.
 
 * If a target already exists and is **not** a link created by this tool:
   * default: **refuse**;
-  * `--backup`: move the existing content to
+  * `--backup`: ask for confirmation, then move the existing content to
     `<server>/.cs2lm-backups/<timestamp>/` and install;
-  * `--force`: same as backup but asks for confirmation (skip with `--yes`).
+  * `--force`: same behavior as `--backup` (confirmation is required);
+  * `--yes`: skip the confirmation prompt (for scripts/CI).
 * Unmanaged files are never overwritten.
 * Repository files are never deleted.
 * All paths are validated to stay inside the server root.
@@ -225,6 +226,33 @@ files whose symlinking is fragile.
   * plugin binary directories (`addons/<pluginname>/`) are symlinked
     (junction/copy fallback on Windows).
 
+## Adding plugins from a URL
+
+```bash
+cs2lm add MyPlugin --url https://example.com/MyPlugin.zip
+```
+
+The tool downloads the zip, extracts it, locates the package root (the
+`addons/` tree or a single wrapping directory), classifies the plugin type,
+and generates the manifest automatically. The zip is not stored in the
+repository — only the extracted plugin files are copied in.
+
+## CSS API dependency checks
+
+When a CSS plugin declares a `CounterStrikeSharp.API` version in its
+`.deps.json`, the version is recorded in the manifest and `doctor` reports a
+warning if it does not match the installed API:
+
+* `api-version-mismatch` — the server has a different `CounterStrikeSharp.API`
+  version than the plugin declares.
+* `api-version-unverifiable` — the plugin declares a dependency but the
+  installed API version could not be read automatically; check it manually.
+
+The API version is read directly from
+`addons/counterstrikesharp/api/CounterStrikeSharp.API.dll` using a small
+built-in ECMA-335 metadata reader (no third-party dependency). If the DLL
+cannot be parsed, `doctor` degrades to the unverifiable warning above.
+
 ## Testing
 
 ```bash
@@ -238,8 +266,12 @@ touches a real server.
 ## Known limitations
 
 * `add` expects a plugin package that is either an `addons/` tree or a plugin
-  folder (`.dll` + `.deps.json` at its root). Zip files must be extracted
-  first.
+  folder (`.dll` + `.deps.json` at its root). Remote **zip** files are handled
+  automatically via `--url`; local zip files must still be extracted first.
+* The CSS API version check is best-effort: it reads the `.deps.json`
+  declaration and the installed `CounterStrikeSharp.API.dll` assembly
+  version. If the DLL cannot be parsed, `doctor` tells you to check
+  manually.
 * Metamod plugin support is best-effort; the primary supported type is
   CounterStrikeSharp.
 * `gamedata/gamedata.json` cannot be managed (shared by the framework); merge

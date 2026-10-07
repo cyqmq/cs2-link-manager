@@ -7,6 +7,7 @@ from pathlib import Path
 
 from cs2lm import linking
 from cs2lm.config import load_config
+from cs2lm.deps import CSS_API_ASSEMBLY, read_dotnet_assembly_version
 from cs2lm.logutil import Logger
 from cs2lm.manifest import list_plugins, load_manifest
 from cs2lm.paths import resolve_within
@@ -296,5 +297,51 @@ def run_doctor(repo: str | Path, logger: Logger | None = None) -> list[dict]:
                         ),
                     }
                 )
+
+    # -- CSS API dependency checks -------------------------------------------
+    for plugin in sorted(installed_plugins):
+        try:
+            manifest = load_manifest(repo_path, plugin)
+        except FileNotFoundError:
+            continue
+        if manifest.get("plugin_type") != "css":
+            continue
+        api_ver = manifest.get("dependencies", {}).get(CSS_API_ASSEMBLY)
+        if not api_ver:
+            continue
+        api_dll = (
+            csgo_dir
+            / "addons"
+            / "counterstrikesharp"
+            / "api"
+            / "CounterStrikeSharp.API.dll"
+        )
+        server_ver = read_dotnet_assembly_version(api_dll)
+        if server_ver is None:
+            issues.append(
+                {
+                    "severity": "warn",
+                    "code": "api-version-unverifiable",
+                    "plugin": plugin,
+                    "message": (
+                        f"plugin '{plugin}' declares CounterStrikeSharp.API "
+                        f"{api_ver} but the installed API version could not be "
+                        "verified automatically; check it manually"
+                    ),
+                }
+            )
+        elif server_ver != api_ver:
+            issues.append(
+                {
+                    "severity": "warn",
+                    "code": "api-version-mismatch",
+                    "plugin": plugin,
+                    "message": (
+                        f"plugin '{plugin}' declares CounterStrikeSharp.API "
+                        f"{api_ver} but the server has {server_ver}; the plugin "
+                        "may not work"
+                    ),
+                }
+            )
 
     return issues

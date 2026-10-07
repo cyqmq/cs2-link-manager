@@ -71,14 +71,18 @@ def use_profile(
     manager: PluginManager,
     logger: Logger | None = None,
 ) -> dict:
-    """Switch to a profile: enable plugins in the profile, disable others."""
+    """Switch to a profile: enable plugins in the profile, disable others.
+
+    Returns ``{"profile", "enabled": [names], "disabled": [names]}`` so the
+    caller can present a before/after diff to the user.
+    """
     logger = logger or Logger()
     profile = get_profile(repo, name)
     wanted = set(profile["plugins"])
     all_plugins = list_plugins(repo)
 
-    enabled_count = 0
-    disabled_count = 0
+    enabled_plugins: list[str] = []
+    disabled_plugins: list[str] = []
     all_plugins_set = set(all_plugins)
 
     for plugin in profile["plugins"]:
@@ -86,9 +90,9 @@ def use_profile(
             logger.warn("profile", f"plugin in profile no longer exists: {plugin}")
             continue
         manifest = load_manifest(repo, plugin)
-        if not manifest.get("enabled"):
+        if not manifest.get("enabled") or not manager.plugin_has_links(plugin):
             manager.enable(plugin)
-            enabled_count += 1
+            enabled_plugins.append(plugin)
 
     for plugin in all_plugins:
         if plugin in wanted:
@@ -96,11 +100,15 @@ def use_profile(
         manifest = load_manifest(repo, plugin)
         if manifest.get("enabled") or manager.plugin_has_links(plugin):
             manager.disable(plugin)
-            disabled_count += 1
+            disabled_plugins.append(plugin)
 
     logger.info(
         "profile",
         f"switched to profile '{name}' "
-        f"(enabled {enabled_count}, disabled {disabled_count})",
+        f"(enabled {len(enabled_plugins)}, disabled {len(disabled_plugins)})",
     )
-    return {"profile": name, "enabled": enabled_count, "disabled": disabled_count}
+    return {
+        "profile": name,
+        "enabled": enabled_plugins,
+        "disabled": disabled_plugins,
+    }

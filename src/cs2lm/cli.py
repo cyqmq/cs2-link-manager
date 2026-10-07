@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 from cs2lm import __version__
@@ -47,7 +48,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_add = sub.add_parser("add", help="Add a plugin package to the repository")
     p_add.add_argument("name", help="Plugin name")
-    p_add.add_argument("path", help="Path to the plugin package or folder")
+    p_add.add_argument(
+        "path",
+        nargs="?",
+        help="Path to the plugin package or folder (omit when using --url)",
+    )
+    p_add.add_argument("--url", default=None, help="Download a zip package from this URL")
     p_add.add_argument("--type", choices=["css", "metamod"], default=None)
     p_add.add_argument("--version", default=None)
 
@@ -117,14 +123,34 @@ def cmd_init(args: argparse.Namespace, logger: Logger) -> int:
 
 def cmd_add(args: argparse.Namespace, logger: Logger) -> int:
     from cs2lm.manifest import add_plugin
+    from cs2lm.url_add import DownloadError, download_and_extract
 
-    manifest = add_plugin(
-        args.repo,
-        args.name,
-        args.path,
-        type_hint=args.type,
-        version=args.version,
-    )
+    if args.url and args.path:
+        raise ValueError("Provide either a local path or --url, not both")
+    if not args.url and not args.path:
+        raise ValueError("Provide a local path or --url for the plugin package")
+
+    if args.url:
+        with tempfile.TemporaryDirectory(prefix="cs2lm-url-") as tmp:
+            try:
+                source = download_and_extract(args.url, tmp)
+            except DownloadError as exc:
+                raise ValueError(str(exc)) from exc
+            manifest = add_plugin(
+                args.repo,
+                args.name,
+                source,
+                type_hint=args.type,
+                version=args.version,
+            )
+    else:
+        manifest = add_plugin(
+            args.repo,
+            args.name,
+            args.path,
+            type_hint=args.type,
+            version=args.version,
+        )
     logger.info(
         "add",
         f"added plugin '{args.name}'",
@@ -242,10 +268,11 @@ def cmd_profile(args: argparse.Namespace, logger: Logger) -> int:
     if command == "use":
         manager = PluginManager(args.repo, dry_run=args.dry_run, logger=logger)
         result = profiles.use_profile(args.repo, args.name, manager, logger=logger)
-        print(
-            f"Switched to profile '{args.name}': "
-            f"{result['enabled']} enabled, {result['disabled']} disabled."
-        )
+        enabled = result["enabled"]
+        disabled = result["disabled"]
+        print(f"Switched to profile '{args.name}':")
+        print(f"  Enabled: {', '.join(enabled) if enabled else '(none)'}")
+        print(f"  Disabled: {', '.join(disabled) if disabled else '(none)'}")
         return 0
     logger.error("profile", f"unknown profile command: {command}")
     return 2

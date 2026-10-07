@@ -329,12 +329,25 @@ def add_plugin(
             "files": files,
             "links": links,
             "ini_lines": ini_lines,
+            "dependencies": _detect_dependencies(plugin_type, files_root),
         }
         save_manifest(repo, name, manifest)
         return manifest
     except Exception:
         shutil.rmtree(pdir, ignore_errors=True)
         raise
+
+
+def _detect_dependencies(plugin_type: str, files_root: Path) -> dict:
+    """Detect runtime dependencies declared by the plugin package."""
+    if plugin_type != "css":
+        return {}
+    from cs2lm.deps import CSS_API_ASSEMBLY, read_api_dependency
+
+    api_version = read_api_dependency(files_root)
+    if not api_version:
+        return {}
+    return {CSS_API_ASSEMBLY: api_version}
 
 
 def _load_config(repo: str | Path) -> dict:

@@ -115,6 +115,19 @@ def test_cli_profile_flow(repo_server, tmp_path):
     assert run(["--repo", str(repo), "profile", "list"]) == 0
 
 
+def test_cli_profile_use_prints_diff(repo_server, tmp_path, capsys):
+    repo, _server = repo_server
+    a = make_css_package(tmp_path, "Alpha")
+    b = make_css_package(tmp_path, "Beta")
+    run(["--repo", str(repo), "add", "Alpha", str(a)])
+    run(["--repo", str(repo), "add", "Beta", str(b)])
+    run(["--repo", str(repo), "profile", "create", "fun", "Alpha"])
+    run(["--repo", str(repo), "profile", "use", "fun"])
+    captured = capsys.readouterr()
+    assert "Enabled: Alpha" in captured.out
+    assert "Disabled: Beta" in captured.out
+
+
 def test_cli_conflict_returns_clean_error(repo_server, tmp_path, capsys):
     repo, server = repo_server
     pkg = make_css_package(tmp_path, "Conflicted")

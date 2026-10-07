@@ -1,7 +1,9 @@
+import json
 import os
 from pathlib import Path
 
 from cs2lm import linking
+from cs2lm import doctor as doctor_mod
 from cs2lm.doctor import run_doctor
 from cs2lm.installer import PluginManager
 from cs2lm.manifest import add_plugin
@@ -96,3 +98,57 @@ def test_doctor_detects_missing_core_files(repo_server):
     assert "missing-metamod-bin" in codes(issues)
     assert "missing-css-vdf" in codes(issues)
     assert "missing-css-api" in codes(issues)
+
+
+def make_css_package_with_api(tmp_path, name, api_version):
+    pkg = tmp_path / name
+    (pkg / "addons" / "counterstrikesharp" / "plugins" / name).mkdir(parents=True)
+    (pkg / "addons" / "counterstrikesharp" / "plugins" / name / f"{name}.dll").write_bytes(b"MZ")
+    (pkg / "addons" / "counterstrikesharp" / "plugins" / name / f"{name}.deps.json").write_text(
+        json.dumps({"libraries": {f"CounterStrikeSharp.API/{api_version}": {}}}),
+        encoding="utf-8",
+    )
+    return pkg
+
+
+def test_doctor_api_version_mismatch(repo_server, tmp_path, monkeypatch):
+    repo, _server = repo_server
+    pkg = make_css_package_with_api(tmp_path, "ApiPlugin", "1.0.300")
+    add_plugin(repo, "ApiPlugin", pkg)
+    PluginManager(repo).install("ApiPlugin")
+
+    monkeypatch.setattr(doctor_mod, "read_dotnet_assembly_version", lambda _p: "1.0.299")
+    issues = run_doctor(repo)
+    assert "api-version-mismatch" in codes(issues)
+    assert "api-version-unverifiable" not in codes(issues)
+
+
+def test_doctor_api_version_match(repo_server, tmp_path, monkeypatch):
+    repo, _server = repo_server
+    pkg = make_css_package_with_api(tmp_path, "ApiPlugin", "1.0.300")
+    add_plugin(repo, "ApiPlugin", pkg)
+    PluginManager(repo).install("ApiPlugin")
+
+    monkeypatch.setattr(doctor_mod, "read_dotnet_assembly_version", lambda _p: "1.0.300")
+    issues = run_doctor(repo)
+    assert "api-version-mismatch" not in codes(issues)
+    assert "api-version-unverifiable" not in codes(issues)
+
+
+def test_doctor_api_version_unverifiable(repo_server, tmp_path, monkeypatch):
+    repo, _server = repo_server
+    pkg = make_css_package_with_api(tmp_path, "ApiPlugin", "1.0.300")
+    add_plugin(repo, "ApiPlugin", pkg)
+    PluginManager(repo).install("ApiPlugin")
+
+    monkeypatch.setattr(doctor_mod, "read_dotnet_assembly_version", lambda _p: None)
+    issues = run_doctor(repo)
+    assert "api-version-unverifiable" in codes(issues)
+    assert "api-version-mismatch" not in codes(issues)
+
+
+def test_read_dotnet_assembly_version_invalid_input(tmp_path):
+    bogus = tmp_path / "not-a-dll.dll"
+    bogus.write_bytes(b"not a PE file at all")
+    assert doctor_mod.read_dotnet_assembly_version(bogus) is None
+    assert doctor_mod.read_dotnet_assembly_version(tmp_path / "missing.dll") is None

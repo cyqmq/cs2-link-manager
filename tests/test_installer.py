@@ -103,6 +103,40 @@ def test_install_conflict_with_backup(repo_server, tmp_path):
     target.mkdir(parents=True)
     (target / "unmanaged.txt").write_text("mine")
 
+    manager = make_manager(repo, backup=True, yes=True)
+    manager.install("TestPlugin")
+    assert linking.path_exists(target)
+    assert not (target / "unmanaged.txt").exists()
+    backups = list((server / ".cs2lm-backups").rglob("unmanaged.txt"))
+    assert backups
+
+
+def test_install_conflict_with_backup_requires_confirmation(repo_server, tmp_path):
+    repo, server = repo_server
+    pkg = make_css_package(tmp_path, "TestPlugin")
+    add_plugin(repo, "TestPlugin", pkg)
+
+    target = plugin_path(server, "TestPlugin")
+    target.mkdir(parents=True)
+    (target / "unmanaged.txt").write_text("mine")
+
+    manager = make_manager(repo, backup=True)  # no --yes -> input() -> EOF -> abort
+    with pytest.raises(linking.ConflictError, match="Aborted by user"):
+        manager.install("TestPlugin")
+    assert (target / "unmanaged.txt").exists()
+    assert not (server / ".cs2lm-backups").exists()
+
+
+def test_install_conflict_with_backup_confirmed(repo_server, tmp_path, monkeypatch):
+    repo, server = repo_server
+    pkg = make_css_package(tmp_path, "TestPlugin")
+    add_plugin(repo, "TestPlugin", pkg)
+
+    target = plugin_path(server, "TestPlugin")
+    target.mkdir(parents=True)
+    (target / "unmanaged.txt").write_text("mine")
+
+    monkeypatch.setattr("builtins.input", lambda prompt: "y")
     manager = make_manager(repo, backup=True)
     manager.install("TestPlugin")
     assert linking.path_exists(target)
