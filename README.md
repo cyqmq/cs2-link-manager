@@ -4,10 +4,9 @@
 ![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)
 [![CI](https://github.com/cyqmq/cs2-link-manager/actions/workflows/ci.yml/badge.svg)](https://github.com/cyqmq/cs2-link-manager/actions/workflows/ci.yml)
 
-A cross-platform CLI tool that manages CS2 **CounterStrikeSharp** and
-**Metamod** plugins by keeping plugin files in a central **repository** and
-mapping them into the server directory with **symbolic links** (junctions on
-Windows, with a copy fallback).
+跨平台 CLI 工具，用于管理 CS2 的 **CounterStrikeSharp** 与 **Metamod** 插件：
+把插件文件保存在中央 **repository**（仓库）中，再用 **符号链接**（Windows
+上使用 junction，失败时回退到复制）映射到服务器目录。
 
 ```
 ┌─────────────── plugins-repo ───────────────┐        ┌─────────────── cs2-server ──────────────┐
@@ -17,101 +16,111 @@ Windows, with a copy fallback).
 └─────────────────────────────────────────────┘        └──────────────────────────────────────────┘
 ```
 
-The plugin loader only ever sees the symlinked directories, so the server
-behaves exactly as if the plugin files were copied there. Uninstalling only
-removes the links — the repository copy is never touched.
+插件加载器只会看到符号链接指向的目录，因此服务器的行为与插件文件被直接复制
+过去完全一致。卸载时只删除链接——仓库中的副本永远不会被改动。
 
-## Why?
+## 为什么这样做？
 
-* **Uninstall residue** — uninstall removes only what the tool created.
-* **Switch plugin sets quickly** — profiles enable/disable whole groups.
-* **CS2 updates** — plugin files live outside `game/` and are not overwritten.
-* **Rollback** — repository files are immutable; reinstall = relink.
+* **无卸载残留** — 卸载只删除本工具创建的内容。
+* **快速切换插件组合** — profile 可以整体启用/禁用一组插件。
+* **抗 CS2 更新** — 插件文件位于 `game/` 之外，不会被更新覆盖。
+* **可回滚** — 仓库文件不可变；重新安装 = 重新链接。
 
-## Requirements
+## 环境要求
 
-* Python **3.11+** (standard library only).
-* Linux (primary) or Windows (supported with junctions/copy fallback).
-* A CS2 dedicated server with Metamod:Source and CounterStrikeSharp already
-  installed (the tool does **not** install the core frameworks).
+* Python **3.11+**（仅标准库）。
+* Linux（首选）或 Windows（支持 junction / 复制回退）。
+* 已安装 Metamod:Source 与 CounterStrikeSharp 的 CS2 专用服务器（本工具
+  **不安装**核心框架）。
 
-## Installation
+## 安装
 
 ```bash
 git clone https://github.com/cyqmq/cs2-link-manager.git
 cd cs2-link-manager
 pip install .
-# or for development:
+# 开发模式：
 pip install -e ".[dev]"
 ```
 
-This installs the `cs2lm` command. You can also run it without installing:
+安装后会提供 `cs2lm` 命令。也可以不安装直接运行：
 
 ```bash
 python -m cs2lm --help
 ```
 
-## Quick start
+## 快速开始
 
 ```bash
-# 1. Initialize a repository (repo + server paths are stored in config.json)
+# 1. 初始化仓库（repo 和 server 路径保存在 config.json）
 cs2lm init --repo ./plugins-repo --server ./cs2-server
 
-# 2. Add a plugin package (a folder containing an addons/ tree, or a plugin folder)
+# 2. 添加插件包（包含 addons/ 树的目录，或插件目录）
 cs2lm add MyPlugin ./downloads/MyPlugin/
 
-# 3. Install (create symlinks in the server)
+# 3. 安装（在服务器中创建符号链接）
 cs2lm install MyPlugin
 
-# 4. Verify
+# 4. 验证
 cs2lm list
 cs2lm doctor
 
-# 5. Remove links (repository copy is kept)
+# 5. 卸载（保留仓库副本）
 cs2lm uninstall MyPlugin
 
-# 6. Profiles
+# 6. Profile 切换
 cs2lm profile create competitive MatchZy SimpleAdmin
 cs2lm profile use competitive
 ```
 
-## Command reference
+## 命令参考
 
-| Command | Description |
+| 命令 | 说明 |
 | --- | --- |
-| `init --server <dir>` | Create repository skeleton and `config.json`. |
-| `add <name> <path>` / `add <name> --url <zip-url>` / `add <name> --pkg <file.cs2pkg>` | Copy a plugin package (local, downloaded zip, or `.cs2pkg`) into the repo, generate `manifest.json`. |
-| `pack <name> [--out <dir>]` | Package a repository plugin as a `.cs2pkg` file. |
-| `install <name>` | Create links defined by the manifest (idempotent). |
-| `uninstall <name>` | Remove tool-created links; keep repo files. |
-| `enable <name>` / `disable <name>` | Create/remove links (same as install/uninstall). |
-| `list` | Show name, type, version, enabled, installed status. |
-| `profile create <name> [plugins...]` | Create a named profile. |
-| `profile use <name>` | Enable profile plugins, disable all others, and print a diff report. |
-| `profile list` / `profile delete <name>` | List / delete profiles. |
-| `doctor` | Check server structure, broken links, missing targets, permissions, conflicts, CSS API version dependencies. |
-| `import <name> <path-in-server>` | Reverse-import a plugin already on the server. |
-| `adopt [--plugin <name>]` | Adopt existing CSS plugins on the server into the repository. |
-| `web [--host H] [--port P]` | Start a local web UI to browse and toggle plugins. |
+| `init --server <dir>` | 创建仓库骨架和 `config.json`。 |
+| `add <name> <path>` / `add <name> --url <zip-url>` / `add <name> --pkg <file.cs2pkg>` | 把插件包（本地目录、下载的 zip 或 `.cs2pkg`）复制进仓库，生成 `manifest.json`。 |
+| `pack <name> [--out <dir>]` | 把仓库插件打包成 `.cs2pkg` 文件。 |
+| `install <name>` | 按 manifest 创建链接（幂等）。 |
+| `uninstall <name>` | 删除工具创建的链接，保留仓库文件。 |
+| `enable <name>` / `disable <name>` | 创建/删除链接（同 install/uninstall）。 |
+| `list` | 显示名称、类型、版本、启用/安装状态。 |
+| `profile create <name> [plugins...]` | 创建命名 profile。 |
+| `profile use <name>` | 启用 profile 内插件、禁用其余插件，并打印差异报告。 |
+| `profile list` / `profile delete <name>` | 列出 / 删除 profile。 |
+| `doctor` | 检查服务器结构、断链、缺失目标、权限、冲突、CSS API 版本依赖。 |
+| `import <name> <path-in-server>` | 把服务器上指定路径的单个插件反向导入仓库。 |
+| `adopt [--plugin <name>]` | 扫描服务器上已有的 CSS 插件，批量导入仓库。 |
+| `web [--host H] [--port P]` | 启动本地 Web UI，浏览并切换插件。 |
 
-Global options: `--repo <path>` (default `plugins-repo`, or `$CS2LM_REPO`),
-`--dry-run`, `--log <file>`, `--log-format text|json`, `--verbose`,
-`--version`.
+全局选项：`--repo <path>`（默认 `plugins-repo` 或 `$CS2LM_REPO`）、
+`--dry-run`、`--log <file>`、`--log-format text|json`、`--verbose`、
+`--version`。
 
 ### `--dry-run`
 
-Every write command supports `--dry-run`; it prints the actions that would be
-performed and changes nothing.
+所有写命令都支持 `--dry-run`：只打印将要执行的动作，不改变任何内容。
 
 ```bash
 cs2lm --repo ./plugins-repo --dry-run install MyPlugin
 ```
 
-## How it works
+### Profile 切换与差异报告
 
-### Manifest
+`profile use <name>` 会启用 profile 内的插件、禁用其余插件，并打印差异报告：
 
-Each plugin in the repository has `manifest.json`:
+```text
+Switched to profile 'competitive':
+  Enabled: MatchZy, SimpleAdmin
+  Disabled: Retakes
+```
+
+`Enabled` 表示本次新增/保持启用的插件，`Disabled` 表示被停用的插件。差异报告会精确体现当前安装状态与目标 profile 的差距。
+
+## 工作原理
+
+### Manifest（清单）
+
+仓库中的每个插件都有 `manifest.json`：
 
 ```json
 {
@@ -132,178 +141,175 @@ Each plugin in the repository has `manifest.json`:
 }
 ```
 
-* `files` maps every repository file to its target path (relative to the
-  server root).
-* `links` are the actual links the installer creates — typically one
-  directory symlink per plugin-owned directory (`plugins/<Name>`,
-  `configs/plugins/<Name>`, `gamedata/plugins/<Name>`, ...).
-* `ini_lines` (Metamod plugins only) are lines appended to
-  `addons/metamod/metaplugins.ini`.
+* `files` 把仓库中的每个文件映射到目标路径（相对于服务器根目录）。
+* `links` 是安装器实际创建的链接——通常每个插件专属目录对应一个目录符号链接
+  （`plugins/<Name>`、`configs/plugins/<Name>`、`gamedata/plugins/<Name>` 等）。
+* `ini_lines`（仅 Metamod 插件）是要追加到
+  `addons/metamod/metaplugins.ini` 的行。
 
-### State database
+### 状态数据库
 
-* **Location**: `<repo>/state/links.json`.
-* **Purpose**: records every link `install`/`enable` creates (plugin, source,
-  target, kind, timestamp). `uninstall`/`disable` remove the matching records,
-  which is how the tool knows exactly what to remove and never touches
-  unmanaged files.
-* **If you delete it**: `uninstall` has no records to follow, so server-side
-  links are left in place (the manifest `enabled` flag is still updated).
-  `doctor` will report those leftover links as `orphan-link` warnings.
-  To recover cleanly: remove the leftover links (as listed by `doctor`),
-  then run `cs2lm install <name>` again to rebuild the records.
+* **位置**：`<repo>/state/links.json`。
+* **作用**：记录每次 `install`/`enable` 创建的链接（插件、源、目标、类型、
+  时间戳）。`uninstall`/`disable` 会移除对应记录——这是工具能精确知道
+  该删除什么、并且绝不触碰未管理文件的原因。
+* **如果误删**：`uninstall` 没有记录可循，服务器上的链接会残留（manifest
+  的 `enabled` 标志仍会被更新）。`doctor` 会把残留链接报告为
+  `orphan-link` 警告。干净的恢复方式：删除 `doctor` 列出的残留链接，
+  然后重新运行 `cs2lm install <name>` 重建记录。
 
-### Link types
+### 链接类型
 
-| Kind | Meaning |
+| 类型 | 含义 |
 | --- | --- |
-| `symlink-dir` | Directory symlink (Linux) / junction fallback (Windows). |
-| `symlink-file` | File symlink (used for plugin-owned single files). |
-| `copy` | Plain copy, used for small Metamod config files (`.vdf`). |
+| `symlink-dir` | 目录符号链接（Linux）/ junction 回退（Windows）。 |
+| `symlink-file` | 文件符号链接（用于插件拥有的单个文件）。 |
+| `copy` | 普通复制，用于小型 Metamod 配置文件（`.vdf`）。 |
 
-On Windows the strategy is: try `os.symlink` → try junction (`mklink /J`) →
-fall back to copy, with a clear warning about Administrator/Developer Mode
-requirements.
+在 Windows 上的策略是：尝试 `os.symlink` → 尝试 junction（`mklink /J`）→
+回退到复制，并给出关于 Administrator / 开发者模式要求的清晰警告。
 
-## Conflict & safety rules
+## 冲突与安全规则
 
-* If a target already exists and is **not** a link created by this tool:
-  * default: **refuse**;
-  * `--backup`: ask for confirmation, then move the existing content to
-    `<server>/.cs2lm-backups/<timestamp>/` and install;
-  * `--force`: move the existing content to backups and install
-    **without asking** — use when you explicitly want to take over the
-    path;
-  * `--yes`: skip the confirmation prompt when using `--backup` (for
-    scripts/CI).
-* Unmanaged files are never overwritten.
-* Repository files are never deleted.
-* All paths are validated to stay inside the server root.
-* Uninstall removes only links recorded in `state/links.json`; if a link was
-  replaced by real content, uninstall refuses rather than delete data.
-* Plugins that try to overwrite core framework files
-  (`counterstrikesharp/bin`, `api`, `dotnet`, `gamedata/gamedata.json`,
-  `metamod/bin`, `metamod.vdf`, ...) are rejected at `add` time.
+* 如果目标已存在，且**不是**本工具创建的链接：
+  * 默认：**拒绝**；
+  * `--backup`：先询问确认，再把已有内容移动到
+    `<server>/.cs2lm-backups/<timestamp>/` 后安装；
+  * `--force`：把已有内容移动到备份后**不询问**直接安装——当你明确要
+    接管该路径时使用；
+  * `--yes`：配合 `--backup` 跳过确认提示（用于脚本/CI）。
+* 绝不覆盖未管理文件。
+* 绝不删除仓库文件。
+* 所有路径都经过校验，确保不会越出服务器根目录。
+* 卸载只删除 `state/links.json` 中记录的链接；如果链接已被真实内容替换，
+  卸载会拒绝而不是删除数据。
+* 试图覆盖核心框架文件的插件（`counterstrikesharp/bin`、`api`、`dotnet`、
+  `gamedata/gamedata.json`、`metamod/bin`、`metamod.vdf` 等）会在 `add`
+  阶段被拒绝。
 
-## Windows notes
+## Windows 说明
 
-* Creating a **real symbolic link** requires the
-  `SeCreateSymbolicLinkPrivilege`, which normally means running as
-  **Administrator** or enabling **Developer Mode** (Windows 10 1703+,
-  Settings → Privacy & security → For developers).
-* **Directory junctions** (`mklink /J`) do **not** require Administrator or
-  Developer Mode — any user can create them on NTFS volumes. Junctions work
-  for directories only. The tool automatically falls back to a junction when
-  creating a directory symlink fails.
-* **Copy fallback** is used when both symlink and junction fail. Typical causes:
-  * the target is on a non-NTFS filesystem (FAT32/exFAT, some network shares),
-  * the target is a single file, not a directory (junctions cannot link
-    files),
-  * the parent directory is not writable.
-  You will always see a clear warning explaining which mode was used and why.
-* Install/uninstall still work correctly in copy mode; the only difference is
-  that plugin updates require a reinstall (copies are not kept in sync
-  automatically).
-* The plugin directories (`plugins/<Name>`, `configs/plugins/<Name>`,
-  `lang/<Name>`, `gamedata/plugins/<Name>`) are all directories, so junction
-  fallback covers the common case.
+* 创建**真正的符号链接**需要 `SeCreateSymbolicLinkPrivilege` 权限，
+  通常意味着以**管理员**身份运行，或启用**开发者模式**（Windows 10 1703+，
+  设置 → 隐私和安全性 → 开发者选项）。
+* **目录 junction**（`mklink /J`）**不需要**管理员或开发者模式——任何
+  用户都能在 NTFS 卷上创建。junction 仅适用于目录。创建目录符号链接失败
+  时，工具会自动回退到 junction。
+* **复制回退**在符号链接和 junction 都失败时使用。常见原因：
+  * 目标位于非 NTFS 文件系统（FAT32/exFAT、某些网络共享）；
+  * 目标是单个文件而不是目录（junction 不能链接文件）；
+  * 父目录不可写。
+  你会看到清晰的警告，说明实际使用了哪种模式以及原因。
+* 复制模式下安装/卸载仍然正常工作；唯一区别是插件更新需要重新安装
+  （副本不会自动保持同步）。
+* 插件目录（`plugins/<Name>`、`configs/plugins/<Name>`、`lang/<Name>`、
+  `gamedata/plugins/<Name>`）都是目录，因此 junction 回退可以覆盖
+  常见场景。
 
-## Link strategy by path
+## 各路径的链接策略
 
-The tool decides per-path how to link plugin files into the server. Core
-framework paths are never touched.
+工具按路径决定如何把插件文件链接进服务器。核心框架路径绝不会被触碰。
 
-| Path (relative to `game/csgo/`) | Strategy | Why |
+| 路径（相对 `game/csgo/`） | 策略 | 原因 |
 | --- | --- | --- |
-| `addons/counterstrikesharp/plugins/<Name>/` | **symlink** (junction on Windows) | CSS enumerates this directory; a symlinked dir is transparent to .NET |
-| `addons/counterstrikesharp/configs/plugins/<Name>/` | **symlink** (junction on Windows) | Per-plugin config directory |
-| `addons/counterstrikesharp/lang/<Name>/` | **symlink** (junction on Windows) | Per-plugin translations |
-| `addons/counterstrikesharp/gamedata/plugins/<Name>/` | **symlink** (junction on Windows) | Plugin-owned gamedata subdirectory |
-| `addons/counterstrikesharp/gamedata/gamedata.json` | **not managed** | Shared by the framework; merging is manual |
-| `addons/counterstrikesharp/api`, `bin`, `dotnet`, `shared` | **not managed** | CSS core framework |
-| `addons/metamod/bin/` | **not managed** | Metamod native binaries (`.so`/`.dll`) |
-| `addons/metamod/*.vdf` (third-party plugin) | **copy + backup + rollback** | Loader files are sensitive to symlinking |
-| `addons/metamod/metaplugins.ini` | **line edit + backup + rollback** | Small text file edited in place |
-| `addons/<metamod-plugin>/` (plugin binaries) | **symlink** (copy fallback on Windows) | Third-party Metamod plugin directory |
-| `addons/metamod.vdf`, `addons/metamod_x64.vdf` | **not managed** | Metamod core loader files |
-| `game/csgo/gameinfo.gi` | **not managed** | Engine config; Metamod is loaded from here |
+| `addons/counterstrikesharp/plugins/<Name>/` | **symlink**（Windows 用 junction） | CSS 会枚举该目录，符号链接目录对 .NET 透明 |
+| `addons/counterstrikesharp/configs/plugins/<Name>/` | **symlink**（Windows 用 junction） | 插件专属配置目录 |
+| `addons/counterstrikesharp/lang/<Name>/` | **symlink**（Windows 用 junction） | 插件专属翻译 |
+| `addons/counterstrikesharp/gamedata/plugins/<Name>/` | **symlink**（Windows 用 junction） | 插件专属 gamedata 子目录 |
+| `addons/counterstrikesharp/gamedata/gamedata.json` | **不管理** | 框架共享文件；需手动合并 |
+| `addons/counterstrikesharp/api`、`bin`、`dotnet`、`shared` | **不管理** | CSS 核心框架 |
+| `addons/metamod/bin/` | **不管理** | Metamod 原生二进制（`.so`/`.dll`） |
+| `addons/metamod/*.vdf`（第三方插件） | **copy + backup + rollback** | 加载器文件对符号链接敏感 |
+| `addons/metamod/metaplugins.ini` | **行编辑 + backup + rollback** | 就地编辑的小文本文件 |
+| `addons/<metamod-plugin>/`（插件二进制） | **symlink**（Windows 上复制回退） | 第三方 Metamod 插件目录 |
+| `addons/metamod.vdf`、`addons/metamod_x64.vdf` | **不管理** | Metamod 核心加载器文件 |
+| `game/csgo/gameinfo.gi` | **不管理** | 引擎配置；Metamod 从这里加载 |
 
-**Metamod/CSS core frameworks are not managed by this tool.** Install them
-manually (see
-[CounterStrikeSharp docs](https://docs.cssharp.dev/) and
-[Metamod:Source install guide](https://wiki.alliedmods.net/Installing_metamod:source)).
-This is intentional: core files include native binaries and loader `.vdf`
-files whose symlinking is fragile — the loader chain depends on how the engine
-resolves `gameinfo.gi` search paths, and Metamod has been broken by engine
-updates before (see
-[metamod-source issue #232](https://github.com/alliedmodders/metamod-source/issues/232)).
+**本工具不管理 Metamod/CSS 核心框架。** 请手动安装（参见
+[CounterStrikeSharp 文档](https://docs.cssharp.dev/) 和
+[Metamod:Source 安装指南](https://wiki.alliedmods.net/Installing_metamod:source)）。
+这是有意为之：核心文件包含原生二进制和加载器 `.vdf`，对符号链接很敏感——
+加载链依赖引擎如何解析 `gameinfo.gi` 的搜索路径，Metamod 曾因引擎更新而
+失效（参见 [metamod-source issue #232](https://github.com/alliedmodders/metamod-source/issues/232)）。
 
-## Metamod handling (important)
+## Metamod 处理（重要）
 
-* Third-party **Metamod plugins**:
-  * `.vdf` files in `addons/metamod/` are managed as **copies** (backup +
-    rollback on failure);
-  * `metaplugins.ini` edits are made with a backup and rolled back on
-    failure;
-  * plugin binary directories (`addons/<pluginname>/`) are symlinked
-    (junction/copy fallback on Windows).
+* 第三方 **Metamod 插件**：
+  * `addons/metamod/` 中的 `.vdf` 文件按 **复制** 方式管理（失败时
+    backup + rollback）；
+  * `metaplugins.ini` 的编辑带备份，失败时回滚；
+  * 插件二进制目录（`addons/<pluginname>/`）使用符号链接
+    （Windows 上 junction/复制回退）。
 
-## Adding plugins from a URL
+## 从 URL 添加插件
 
 ```bash
 cs2lm add MyPlugin --url https://example.com/MyPlugin.zip
 ```
 
-The tool downloads the zip, extracts it, locates the package root (the
-`addons/` tree or a single wrapping directory), classifies the plugin type,
-and generates the manifest automatically. The zip is not stored in the
-repository — only the extracted plugin files are copied in.
+工具会下载 zip、解压、定位包根目录（`addons/` 树或单个包装目录）、自动
+识别插件类型并生成清单。zip 不会存入仓库——只复制解压后的插件文件。
 
-## CSS API dependency checks
+## CSS API 依赖检查
 
-When a CSS plugin declares a `CounterStrikeSharp.API` version in its
-`.deps.json`, the version is recorded in the manifest and `doctor` reports a
-warning if it does not match the installed API:
+当 CSS 插件在其 `.deps.json` 中声明 `CounterStrikeSharp.API` 版本时，该
+版本会记录进 manifest，`doctor` 会在与已安装 API 不匹配时发出警告：
 
-* `api-version-mismatch` — the server has a different `CounterStrikeSharp.API`
-  version than the plugin declares.
-* `api-version-unverifiable` — the plugin declares a dependency but the
-  installed API version could not be read automatically; check it manually.
+* `api-version-mismatch` — 服务器的 `CounterStrikeSharp.API` 版本与插件声明
+  的不同。
+* `api-version-unverifiable` — 插件声明了依赖，但无法自动读取已安装的 API
+  版本；请手动核对。
 
-The API version is read directly from
-`addons/counterstrikesharp/api/CounterStrikeSharp.API.dll` using a small
-built-in ECMA-335 metadata reader (no third-party dependency). If the DLL
-cannot be parsed, `doctor` degrades to the unverifiable warning above.
+API 版本直接从
+`addons/counterstrikesharp/api/CounterStrikeSharp.API.dll` 读取，使用内置的
+小型 ECMA-335 元数据读取器（无第三方依赖）。如果无法解析 DLL，`doctor`
+会降级为上面的 unverifiable 警告。
 
-## `.cs2pkg` package format
+## `.cs2pkg` 插件包格式
 
-A `.cs2pkg` file is a zip archive that standardizes plugin distribution:
+`.cs2pkg` 是一个 zip 归档，用于标准化插件分发：
 
-* `cs2pkg.json` — package metadata (name, version, plugin_type, ini_lines);
-* the plugin file tree (an `addons/` tree mirroring the server layout).
+* `cs2pkg.json` — 包元数据（name、version、plugin_type、ini_lines）；
+* 插件文件树（镜像服务器布局的 `addons/` 树）。
 
-Plugin authors can publish `.cs2pkg` files; server owners install them with:
+`cs2pkg.json` 的最小示例：
+
+```json
+{
+  "name": "MyPlugin",
+  "version": "1.0.0",
+  "plugin_type": "css",
+  "ini_lines": []
+}
+```
+
+文件树放在与 `cs2pkg.json` 同目录下的 `addons/` 里。插件作者可以直接照此
+结构打包发布。
+
+插件作者可以发布 `.cs2pkg` 文件，服主安装：
 
 ```bash
 cs2lm add MyPlugin --pkg ./MyPlugin.cs2pkg
 ```
 
-Repository plugins can be exported back into this format:
+仓库中的插件也可以导出为该格式：
 
 ```bash
 cs2lm pack MyPlugin --out ./releases/
 # -> releases/MyPlugin.cs2pkg
 ```
 
-The format reuses the existing manifest/link generation: after `add --pkg`,
-the plugin is stored in the repository and managed with symlinks exactly like
-any other plugin.
+该格式复用了现有的 manifest/链接生成流程：`add --pkg` 之后，插件会被存储
+在仓库中，并像其他插件一样用符号链接管理。
 
-## Adopting existing plugins
+## 接管已有插件（adopt）
 
-If a server already has plugins installed by another manager (or manually),
-`adopt` copies them into the repository so you can manage them with symlinks
-and profiles from then on — the tool acts as the "landing layer":
+`import` 与 `adopt` 的区别：`import` 处理服务器上**指定路径**的单个插件；
+`adopt` 会**扫描整个服务器**，批量导入所有 CSS 插件。当你明确知道插件
+所在位置时用 `import`；想一次性接管现有服务器时用 `adopt`。
+
+如果服务器上已经有其他管理器（或手动）安装的插件，`adopt` 会把它们复制进
+仓库，之后你就可以统一用符号链接和 profile 管理——工具充当"落地层"：
 
 ```bash
 cs2lm adopt
@@ -313,84 +319,74 @@ cs2lm adopt
 #   cs2lm install <name> --backup
 ```
 
-The originals are left in place so nothing is destroyed during the copy.
-To take over a plugin without manual cleanup, install it with `--backup` —
-the old files are moved to `<server>/.cs2lm-backups/<timestamp>/` and the
-plugin is linked from the repository:
+复制过程中原文件会保留，不会被破坏。想不手动清理就接管插件，可以用
+`--backup` 安装——旧文件会被移动到
+`<server>/.cs2lm-backups/<timestamp>/`，插件则从仓库链接：
 
 ```bash
 cs2lm install MatchZy --backup
 cs2lm install SimpleAdmin --backup
 ```
 
-Use `--plugin <name>` to adopt a single plugin. Plugins already in the
-repository are skipped.
+使用 `--plugin <name>` 只接管单个插件。已在仓库中的插件会跳过。
 
 ## Web UI
 
-A small read/write web interface is available for server owners who prefer a
-browser over the CLI:
+为喜欢用浏览器的服主提供了一个小型可读写 Web 界面：
 
 ```bash
 cs2lm web --port 8080
 # cs2-link-manager Web UI at http://127.0.0.1:8080/  (Ctrl+C to stop)
 ```
 
-The page lists plugins (name, type, version, enabled, installed) with
-enable/disable buttons. **Security**: it binds to `127.0.0.1` by default and
-has no authentication — do not expose it to an untrusted network. To use it
-from a remote machine, tunnel it over SSH instead of opening the port:
+页面列出插件（名称、类型、版本、启用状态、安装状态）并提供启用/禁用按钮。
+**安全提示**：默认绑定 `127.0.0.1` 且没有认证——不要把端口暴露到不可信
+网络。如果需要在远程机器上使用，请通过 SSH 端口转发访问：
 
 ```bash
 ssh -L 8080:127.0.0.1:8080 user@server-host
-# then open http://127.0.0.1:8080/ locally
+# 然后在本地打开 http://127.0.0.1:8080/
 ```
 
-## Testing
+## 测试
 
 ```bash
 pip install -e ".[dev]"
 pytest
 ```
 
-The test suite simulates a CS2 server under temporary directories — it never
-touches a real server.
+测试套件在临时目录中模拟 CS2 服务器——绝不会触碰真实服务器。
 
-## Known limitations
+## 已知限制
 
-* `add` expects a plugin package that is either an `addons/` tree or a plugin
-  folder (`.dll` + `.deps.json` at its root). Remote **zip** files are handled
-  automatically via `--url`, and `.cs2pkg` files via `--pkg`; other local
-  zip files must still be extracted first.
-* The CSS API version check is best-effort: it reads the `.deps.json`
-  declaration and the installed `CounterStrikeSharp.API.dll` assembly
-  version. If the DLL cannot be parsed, `doctor` tells you to check
-  manually.
-* Metamod plugin support is best-effort; the primary supported type is
-  CounterStrikeSharp.
-* `gamedata/gamedata.json` cannot be managed (shared by the framework); merge
-  such changes manually.
-* Runtime-written files inside plugin directories (e.g. plugin-created
-  configs) persist in the repository copy when using symlinks, and are removed
-  with the copy when using copy fallback.
+* `add` 期望的插件包是 `addons/` 树或插件目录（根目录含 `.dll` +
+  `.deps.json`）。远程 **zip** 通过 `--url` 自动处理，`.cs2pkg` 通过
+  `--pkg` 处理；其他本地 zip 文件仍需先手动解压。
+* CSS API 版本检查是尽力而为：它读取 `.deps.json` 声明和已安装
+  `CounterStrikeSharp.API.dll` 的程序集版本。如果 DLL 无法解析，`doctor`
+  会提示手动核对。
+* Metamod 插件支持是尽力而为；主要支持的类型是 CounterStrikeSharp。
+* `gamedata/gamedata.json` 无法管理（框架共享文件）；此类改动请手动合并。
+* 插件目录中运行时写入的文件（例如插件生成的配置）在使用符号链接时会
+  保留在仓库副本中；使用复制回退时，会随副本一起被删除。
 
-## Project layout
+## 项目布局
 
 ```
 cs2-link-manager/
-  src/cs2lm/        # CLI, installer, manifests, profiles, doctor, ...
-  docs/research.md   # research notes and decisions
-  tests/             # pytest suite (unit + integration)
-  examples/          # example profiles and plugin package
+  src/cs2lm/        # CLI、安装器、manifest、profile、doctor 等
+  docs/research.md   # 研究笔记与决策
+  tests/             # pytest 测试套件（单元 + 集成）
+  examples/          # 示例 profile 和演示插件包
   pyproject.toml
   README.md
   CONTRIBUTING.md
+  CHANGELOG.md
 ```
 
-## Contributing
+## 参与贡献
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, test
-instructions, and pull request guidelines.
+开发环境搭建、测试说明和 PR 指南请参见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ## License
 
