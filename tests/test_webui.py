@@ -84,6 +84,49 @@ def test_webui_toggle_enable(repo_server, tmp_path):
         thread.join()
 
 
+def test_webui_accepts_auth_token_header(repo_server, tmp_path):
+    """Script/API clients can authenticate with X-Auth-Token instead of ?token=."""
+    import urllib.error
+
+    repo, _server = repo_server
+    add_plugin(repo, tmp_path, "WebPlugin")
+    server, thread, port = start_server(repo, auth_token="secret")
+    base = f"http://127.0.0.1:{port}"
+
+    try:
+        # GET with header.
+        req = urllib.request.Request(base + "/", headers={"X-Auth-Token": "secret"})
+        with urllib.request.urlopen(req) as resp:
+            assert resp.status == 200
+            assert "WebPlugin" in resp.read().decode("utf-8")
+
+        # POST with header.
+        data = urllib.parse.urlencode(
+            {"plugin": "WebPlugin", "action": "disable"}
+        ).encode()
+        req = urllib.request.Request(
+            base + "/toggle",
+            data=data,
+            method="POST",
+            headers={"X-Auth-Token": "secret"},
+        )
+        with urllib.request.urlopen(req) as resp:
+            assert resp.status == 200
+        manifest = load_manifest(repo, "WebPlugin")
+        assert manifest["enabled"] is False
+
+        # Wrong header is rejected.
+        req = urllib.request.Request(base + "/", headers={"X-Auth-Token": "wrong"})
+        try:
+            urllib.request.urlopen(req)
+            raise AssertionError("expected HTTPError for wrong header token")
+        except urllib.error.HTTPError as exc:
+            assert exc.code == 401
+    finally:
+        server.shutdown()
+        thread.join()
+
+
 def test_webui_requires_token(repo_server, tmp_path):
     import urllib.error
 

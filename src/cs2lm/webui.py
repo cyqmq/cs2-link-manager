@@ -115,14 +115,22 @@ class _Handler(BaseHTTPRequestHandler):
         required = getattr(self.server, "auth_token", None)
         return not required or token == required
 
+    def _request_token(self) -> str | None:
+        """Read the auth token from the X-Auth-Token header, then the query
+        string / form body. Header support makes script/API usage convenient."""
+        header = self.headers.get("X-Auth-Token")
+        if header:
+            return header
+        parsed = urllib.parse.urlparse(self.path)
+        qs = urllib.parse.parse_qs(parsed.query)
+        return (qs.get("token") or [""])[0]
+
     def do_GET(self):  # noqa: N802
         parsed = urllib.parse.urlparse(self.path)
         if parsed.path != "/":
             self.send_error(404, "Not Found")
             return
-        qs = urllib.parse.parse_qs(parsed.query)
-        token = (qs.get("token") or [""])[0]
-        if not self._authorized(token):
+        if not self._authorized(self._request_token()):
             self._send_html(_render_login(), status=401)
             return
         self._send_html(_render_page(self.server.repo, auth_token=getattr(self.server, "auth_token", None)))
@@ -137,7 +145,7 @@ class _Handler(BaseHTTPRequestHandler):
         form = urllib.parse.parse_qs(body)
         name = (form.get("plugin") or [""])[0]
         action = (form.get("action") or [""])[0]
-        token = (form.get("token") or [""])[0]
+        token = self.headers.get("X-Auth-Token") or (form.get("token") or [""])[0]
         if not self._authorized(token):
             self._send_html(_render_login(), status=401)
             return

@@ -28,7 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **import**: rejecting a symlink path now explains that the path is likely
   already managed by this tool or another repository.
 - **web**: `--auth-token <token>` adds a required shared token to the web UI;
-  binding a non-loopback host without a token prints a warning.
+  binding a non-loopback host without a token prints a warning. Tokens can be
+  sent via the `X-Auth-Token` header (script/API friendly) as well as the
+  `?token=` query parameter / form field.
 
 ## [0.1.0] - 2026-10-07
 

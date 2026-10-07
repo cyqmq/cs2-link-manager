@@ -373,7 +373,13 @@ cs2lm web --host 0.0.0.0 --port 8080 --auth-token my-secret
 # 访问 http://<host>:8080/?token=my-secret （页面上会显示令牌输入框）
 ```
 
-设置了令牌后，所有页面和开关操作都必须携带该令牌。
+设置了令牌后，所有页面和开关操作都必须携带该令牌。脚本/API 调用可以走
+`X-Auth-Token` 请求头，无需在 URL 里带令牌：
+
+```bash
+curl -H "X-Auth-Token: my-secret" http://127.0.0.1:8080/
+curl -X POST -H "X-Auth-Token: my-secret" -d "plugin=MatchZy&action=disable" http://127.0.0.1:8080/toggle
+```
 
 ## 测试
 
