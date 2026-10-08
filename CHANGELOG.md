@@ -22,6 +22,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   link mode (symlink / junction / copy).
 - **UTF-8 output**: CLI forces UTF-8 on stdout/stderr so Windows web.log is
   identical to Linux (no more GBK mojibake).
+- **cs2pkg metadata**: `cs2pkg.json` now carries optional
+  author/description/license/homepage/repository/dependencies, preserved
+  through `pack` and `add --pkg` round trips.
+- **checksums**: every managed file records its SHA-256 in the manifest as
+  groundwork for future integrity/update checks.
+- **URL addons search**: `add --url` recursively finds nested `addons/`
+  trees (GitHub source zips: `public/addons`, `.Compiled/addons`, etc.) and
+  accepts `--addons-subdir` for explicit location.
+- **local registry**: `registry add/list/remove`, `search`, and
+  `install --from-registry` provide a one-command plugin install workflow
+  from a plain JSON registry (`registry.json`).
+- **README**: documents the registry, URL subdirs, package metadata and
+  multi-plugin rejection.
+
+### Changed
+
+- **add**: packages containing multiple plugin directories under
+  `plugins/` are now rejected with a clear message listing the directories,
+  instead of being silently treated as one plugin. The model stays "one
+  repository entry = one plugin".
 
 ### Fixed
 

@@ -1,0 +1,94 @@
+"""Local plugin registry: a small JSON index of plugin sources.
+
+A registry lives at ``<repo>/registry.json`` and maps a plugin name to a
+source URL (plus optional metadata). This gives users a lightweight
+"one-command install" workflow without depending on a central service:
+
+* ``cs2lm registry add MatchZy https://example.com/matchzy.zip``
+* ``cs2lm search matchzy``
+* ``cs2lm install MatchZy --from-registry``
+
+The registry is deliberately plain JSON so community repositories (e.g. the
+awesome-cs2 manifest lists) can be exported/imported into it.
+"""
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+REGISTRY_FILENAME = "registry.json"
+
+
+def registry_path(repo: str | Path) -> Path:
+    return Path(repo) / REGISTRY_FILENAME
+
+
+def load_registry(repo: str | Path) -> dict:
+    p = registry_path(repo)
+    if p.exists():
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return {}
+        return data if isinstance(data, dict) else {}
+    return {}
+
+
+def save_registry(repo: str | Path, data: dict) -> None:
+    p = registry_path(repo)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(
+        json.dumps(data, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+
+def registry_add(
+    repo: str | Path,
+    name: str,
+    url: str,
+    description: str = "",
+    type_hint: str | None = None,
+    addons_subdir: str | None = None,
+) -> dict:
+    """Add or update a registry entry. Returns the stored entry."""
+    if not name.strip():
+        raise ValueError("Registry entry name cannot be empty")
+    if not url:
+        raise ValueError("Registry entry URL cannot be empty")
+    entry = {
+        "url": url,
+        "description": description,
+        "type": type_hint,
+        "addons_subdir": addons_subdir,
+    }
+    data = load_registry(repo)
+    data[name.strip()] = entry
+    save_registry(repo, data)
+    return entry
+
+
+def registry_remove(repo: str | Path, name: str) -> None:
+    data = load_registry(repo)
+    if name not in data:
+        raise KeyError(f"Registry entry not found: {name}")
+    del data[name]
+    save_registry(repo, data)
+
+
+def registry_search(repo: str | Path, query: str = "") -> list[tuple[str, dict]]:
+    """Return ``(name, entry)`` pairs matching ``query`` (name/desc/url)."""
+    data = load_registry(repo)
+    q = query.strip().lower()
+    results: list[tuple[str, dict]] = []
+    for name, entry in sorted(data.items()):
+        haystack = " ".join(
+            [
+                name,
+                str(entry.get("description", "")),
+                str(entry.get("url", "")),
+            ]
+        ).lower()
+        if not q or q in haystack:
+            results.append((name, entry))
+    return results

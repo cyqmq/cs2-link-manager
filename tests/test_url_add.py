@@ -125,3 +125,63 @@ def test_add_plugin_from_url_repo(repo_server, tmp_path):
         root = download_and_extract(f"{base_url}/{zip_path.name}", tmp_path / "dl")
         add_plugin(repo, "DirectPlugin", root)
     assert "DirectPlugin" in list_plugins(repo)
+
+
+def test_download_and_extract_nested_addons(tmp_path):
+    """GitHub source zips nest build output under public/addons — must be found."""
+    import shutil
+
+    pkg = make_css_package(tmp_path, "Nested")
+    src = tmp_path / "repo"
+    (src / "public").mkdir(parents=True)
+    shutil.copytree(pkg / "addons", src / "public" / "addons")
+    (src / "README.md").write_text("readme")
+    zip_path = make_zip(tmp_path, src, zip_name="nested.zip")
+    dest = tmp_path / "out"
+    with serve_dir(zip_path.parent) as base_url:
+        root = download_and_extract(f"{base_url}/{zip_path.name}", dest)
+    assert (root / "addons" / "counterstrikesharp" / "plugins" / "Nested").is_dir()
+
+
+def test_resolve_addons_subdir(tmp_path):
+    """--addons-subdir points at the directory whose addons/ tree holds the plugin."""
+    import shutil
+
+    from cs2lm.url_add import resolve_addons_subdir
+
+    pkg = make_css_package(tmp_path, "Sub")
+    src = tmp_path / "repo"
+    (src / "public").mkdir(parents=True)
+    shutil.copytree(pkg / "addons", src / "public" / "addons")
+    assert resolve_addons_subdir(src, "public") == src / "public"
+    # Passing the addons dir itself is normalized to its parent.
+    assert resolve_addons_subdir(src, "public/addons") == src / "public"
+
+
+def test_cli_add_url_with_addons_subdir(repo_server, tmp_path):
+    """End-to-end: add --url ... --addons-subdir public finds nested addons."""
+    import shutil
+
+    repo, _server = repo_server
+    pkg = make_css_package(tmp_path, "UrlPlugin")
+    src = tmp_path / "repo"
+    (src / "public").mkdir(parents=True)
+    shutil.copytree(pkg / "addons", src / "public" / "addons")
+    zip_path = make_zip(tmp_path, src, zip_name="plugin.zip")
+    with serve_dir(zip_path.parent) as base_url:
+        rc = cli.main(
+            [
+                "--repo",
+                str(repo),
+                "add",
+                "UrlPlugin",
+                "--url",
+                f"{base_url}/{zip_path.name}",
+                "--addons-subdir",
+                "public",
+            ]
+        )
+    assert rc == 0
+    assert "UrlPlugin" in list_plugins(repo)
+    manifest = load_manifest(repo, "UrlPlugin")
+    assert any("plugins/UrlPlugin" in f["source"] for f in manifest["files"])

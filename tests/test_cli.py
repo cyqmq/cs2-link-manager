@@ -162,3 +162,46 @@ def test_cli_web_requires_token_on_non_loopback(repo_server, capsys):
     assert rc == 1
     captured = capsys.readouterr()
     assert "requires --auth-token" in captured.err
+
+
+def test_cli_registry_roundtrip(repo_server, tmp_path):
+    """registry add -> search -> install --from-registry (file:// source)."""
+    import zipfile
+
+    from cs2lm.installer import PluginManager
+    from cs2lm.manifest import list_plugins
+
+    repo, _server = repo_server
+    pkg = make_css_package(tmp_path, "RegPlugin")
+    zip_path = tmp_path / "regplugin.zip"
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for f in sorted(pkg.rglob("*")):
+            if f.is_file():
+                zf.write(f, f.relative_to(pkg).as_posix())
+
+    # registry add
+    rc = run(
+        [
+            "--repo",
+            str(repo),
+            "registry",
+            "add",
+            "RegPlugin",
+            zip_path.as_uri(),
+            "--description",
+            "A registry plugin",
+            "--type",
+            "css",
+        ]
+    )
+    assert rc == 0
+
+    # search finds it
+    assert run(["--repo", str(repo), "search", "registry"]) == 0
+
+    # install --from-registry downloads the file:// zip, adds, and installs.
+    rc = run(["--repo", str(repo), "install", "RegPlugin", "--from-registry"])
+    assert rc == 0
+    assert "RegPlugin" in list_plugins(repo)
+    installed = [p["name"] for p in PluginManager(repo).list_plugins() if p["installed"]]
+    assert "RegPlugin" in installed

@@ -5,6 +5,8 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
+from cs2lm.cs2pkg import find_addons_root
+
 
 class DownloadError(Exception):
     """Raised when a plugin package cannot be downloaded or extracted."""
@@ -36,20 +38,45 @@ def download_and_extract(url: str, dest_dir: str | Path) -> Path:
     return _find_plugin_root(dest)
 
 
+def resolve_addons_subdir(extract_dir: str | Path, subdir: str | Path) -> Path:
+    """Resolve an explicit ``--addons-subdir`` inside an extracted zip.
+
+    The subdir should be the directory whose ``addons/`` subtree holds the
+    plugin (e.g. ``public`` for ``public/addons``). Passing the ``addons``
+    directory itself is also accepted and normalized to its parent.
+    """
+    candidate = Path(extract_dir) / subdir
+    if not candidate.is_dir():
+        raise ValueError(
+            f"--addons-subdir not found in archive: {subdir} (looked at "
+            f"{candidate})."
+        )
+    if (candidate / "addons").is_dir():
+        return candidate
+    if candidate.name == "addons" and candidate.is_dir():
+        return candidate.parent
+    raise ValueError(
+        f"--addons-subdir {subdir} does not contain an addons/ tree. Point "
+        "it at the directory whose addons/ subtree holds the plugin (e.g. "
+        "--addons-subdir public for public/addons)."
+    )
+
+
 def _find_plugin_root(extract_dir: Path) -> Path:
     """Locate the package root after extraction.
 
-    The zip may contain the ``addons/`` tree at the top level, or a single
-    wrapping directory that itself contains ``addons/`` or the plugin files.
+    The zip may contain the ``addons/`` tree at the top level, a nested
+    ``addons/`` (GitHub source zips put build output under ``public/addons``
+    or ``.Compiled/addons``), or a single wrapping directory that contains
+    the plugin files.
     """
-    if (extract_dir / "addons").is_dir():
-        return extract_dir
+    addons_root = find_addons_root(extract_dir)
+    if addons_root is not None:
+        return addons_root
 
     dirs = sorted(p for p in extract_dir.iterdir() if p.is_dir())
     if len(dirs) == 1:
         child = dirs[0]
-        if (child / "addons").is_dir():
-            return child
         if list(child.glob("*.dll")) or list(child.glob("*.deps.json")):
             return child
         if (child / "bin").exists():

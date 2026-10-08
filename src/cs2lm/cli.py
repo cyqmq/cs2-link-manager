@@ -57,6 +57,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_add.add_argument("--pkg", default=None, help="Add a plugin from a local .cs2pkg file")
     p_add.add_argument("--type", choices=["css", "metamod"], default=None)
     p_add.add_argument("--version", default=None)
+    p_add.add_argument(
+        "--addons-subdir",
+        default=None,
+        help="With --url: subdirectory inside the extracted zip whose addons/ "
+        "tree holds the plugin (e.g. 'public' for public/addons)",
+    )
 
     p_pack = sub.add_parser("pack", help="Package a repository plugin as a .cs2pkg file")
     p_pack.add_argument("name", help="Plugin name")
@@ -64,6 +70,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_install = sub.add_parser("install", help="Install a plugin (create links)")
     p_install.add_argument("name")
+    p_install.add_argument("--from-registry", action="store_true", help="Add the plugin from the local registry first, then install")
     p_install.add_argument("--backup", action="store_true", help="Back up conflicting targets")
     p_install.add_argument("--force", action="store_true", help="Force install with confirmation")
     p_install.add_argument("--yes", action="store_true", help="Skip confirmation when using --backup")
@@ -128,6 +135,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="Append daemon stdout/stderr to this log file (used with --daemon)",
     )
 
+    p_registry = sub.add_parser("registry", help="Manage the local plugin registry")
+    p_registry_sub = p_registry.add_subparsers(dest="registry_command", required=True)
+    p_registry_add = p_registry_sub.add_parser("add", help="Add or update a registry entry")
+    p_registry_add.add_argument("name")
+    p_registry_add.add_argument("url")
+    p_registry_add.add_argument("--description", default="")
+    p_registry_add.add_argument("--type", choices=["css", "metamod"], default=None)
+    p_registry_add.add_argument("--addons-subdir", default=None)
+    p_registry_remove = p_registry_sub.add_parser("remove", help="Remove a registry entry")
+    p_registry_remove.add_argument("name")
+    p_registry_list = p_registry_sub.add_parser("list", help="List registry entries")
+
+    p_search = sub.add_parser("search", help="Search the local plugin registry")
+    p_search.add_argument("query", nargs="?", default="", help="Search text (name/description/url)")
+
     return parser
 
 
@@ -160,7 +182,11 @@ def cmd_init(args: argparse.Namespace, logger: Logger) -> int:
 def cmd_add(args: argparse.Namespace, logger: Logger) -> int:
     from cs2lm.cs2pkg import extract_pkg
     from cs2lm.manifest import add_plugin
-    from cs2lm.url_add import DownloadError, download_and_extract
+    from cs2lm.url_add import (
+        DownloadError,
+        download_and_extract,
+        resolve_addons_subdir,
+    )
 
     sources = [bool(args.path), bool(args.url), bool(args.pkg)]
     if sum(sources) > 1:
@@ -174,6 +200,8 @@ def cmd_add(args: argparse.Namespace, logger: Logger) -> int:
                 source = download_and_extract(args.url, tmp)
             except DownloadError as exc:
                 raise ValueError(str(exc)) from exc
+            if args.addons_subdir:
+                source = resolve_addons_subdir(tmp, args.addons_subdir)
             if not args.name:
                 raise ValueError("A plugin name is required when adding from a URL.")
             manifest = add_plugin(
@@ -199,6 +227,7 @@ def cmd_add(args: argparse.Namespace, logger: Logger) -> int:
                 source,
                 type_hint=type_hint,
                 version=version,
+                meta=meta,
             )
     else:
         if not args.name:
@@ -221,6 +250,38 @@ def cmd_add(args: argparse.Namespace, logger: Logger) -> int:
 
 
 def cmd_install(args: argparse.Namespace, logger: Logger) -> int:
+    if args.from_registry:
+        from cs2lm.manifest import add_plugin, list_plugins
+        from cs2lm.registry import load_registry
+        from cs2lm.url_add import (
+            DownloadError,
+            download_and_extract,
+            resolve_addons_subdir,
+        )
+
+        entry = load_registry(args.repo).get(args.name)
+        if not entry:
+            raise ValueError(
+                f"No registry entry found: {args.name}. Add one with "
+                "'cs2lm registry add <name> <url>'."
+            )
+        if args.name not in list_plugins(args.repo):
+            with tempfile.TemporaryDirectory(prefix="cs2lm-reg-") as tmp:
+                try:
+                    source = download_and_extract(entry["url"], tmp)
+                except DownloadError as exc:
+                    raise ValueError(str(exc)) from exc
+                if entry.get("addons_subdir"):
+                    source = resolve_addons_subdir(tmp, entry["addons_subdir"])
+                add_plugin(
+                    args.repo,
+                    args.name,
+                    source,
+                    type_hint=entry.get("type"),
+                    meta=entry,
+                )
+            print(f"Added '{args.name}' from registry.")
+
     manager = PluginManager(
         args.repo,
         dry_run=args.dry_run,
@@ -376,6 +437,59 @@ def cmd_web(args: argparse.Namespace, logger: Logger) -> int:
     return 0
 
 
+def cmd_registry(args: argparse.Namespace, logger: Logger) -> int:
+    from cs2lm.registry import (
+        registry_add,
+        registry_remove,
+        registry_search,
+    )
+
+    command = args.registry_command
+    if command == "add":
+        registry_add(
+            args.repo,
+            args.name,
+            args.url,
+            description=args.description,
+            type_hint=args.type,
+            addons_subdir=args.addons_subdir,
+        )
+        print(f"Registry: added '{args.name}' -> {args.url}")
+        return 0
+    if command == "remove":
+        try:
+            registry_remove(args.repo, args.name)
+        except KeyError as exc:
+            raise ValueError(str(exc)) from exc
+        print(f"Registry: removed '{args.name}'")
+        return 0
+    if command == "list":
+        entries = registry_search(args.repo)
+        if not entries:
+            print("Registry is empty. Add entries with 'cs2lm registry add <name> <url>'.")
+            return 0
+        for name, entry in entries:
+            desc = f" — {entry.get('description')}" if entry.get("description") else ""
+            subdir = f" (addons-subdir: {entry['addons_subdir']})" if entry.get("addons_subdir") else ""
+            print(f"{name}: {entry['url']}{desc}{subdir}")
+        return 0
+    logger.error("registry", f"unknown registry command: {command}")
+    return 2
+
+
+def cmd_search(args: argparse.Namespace, logger: Logger) -> int:
+    from cs2lm.registry import registry_search
+
+    entries = registry_search(args.repo, args.query)
+    if not entries:
+        print(f"No registry entries matching {args.query!r}." if args.query else "Registry is empty.")
+        return 0
+    for name, entry in entries:
+        desc = f" — {entry.get('description')}" if entry.get("description") else ""
+        print(f"{name}: {entry['url']}{desc}")
+    return 0
+
+
 def cmd_profile(args: argparse.Namespace, logger: Logger) -> int:
     command = args.profile_command
     if command == "list":
@@ -420,6 +534,8 @@ HANDLERS = {
     "import": cmd_import,
     "adopt": cmd_adopt,
     "profile": cmd_profile,
+    "registry": cmd_registry,
+    "search": cmd_search,
     "web": cmd_web,
 }
 

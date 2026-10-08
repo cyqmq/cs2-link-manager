@@ -10,6 +10,7 @@ A manifest describes:
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 from datetime import datetime, timezone
@@ -172,7 +173,13 @@ def _normalize_css_plugin_dirs(files_root: Path, name: str) -> None:
         return
     plugin_dirs = [p for p in plugins_dir.iterdir() if p.is_dir()]
     if len(plugin_dirs) != 1:
-        return  # Multiple plugin dirs: package layout wins, cannot rename.
+        names = ", ".join(p.name for p in plugin_dirs)
+        raise ValueError(
+            f"Package contains {len(plugin_dirs)} plugin directories under "
+            f"'plugins/': {names}. cs2-link-manager manages one plugin per "
+            "repository entry — extract and add each plugin separately, or "
+            "use 'cs2lm adopt' for plugins already on the server."
+        )
     old_name = plugin_dirs[0].name
     if old_name == name or not old_name:
         return
@@ -203,12 +210,23 @@ def _copy_source(plugin_type: str, source: Path, name: str, files_root: Path) ->
 # Manifest generation
 # ---------------------------------------------------------------------------
 
+def _sha256(path: Path) -> str:
+    """Compute the SHA-256 hex digest of a file."""
+    digest = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _walk_files(files_root: Path) -> list[dict]:
     files: list[dict] = []
     for f in sorted(files_root.rglob("*")):
         if f.is_file() and not f.is_symlink():
             rel = f.relative_to(files_root).as_posix()
-            files.append({"source": f"files/{rel}"})
+            files.append(
+                {"source": f"files/{rel}", "sha256": _sha256(f)}
+            )
     return files
 
 
@@ -338,8 +356,16 @@ def add_plugin(
     source: str | Path,
     type_hint: str | None = None,
     version: str | None = None,
+    meta: dict | None = None,
 ) -> dict:
-    """Copy a plugin package into the repository and generate its manifest."""
+    """Copy a plugin package into the repository and generate its manifest.
+
+    ``meta`` is optional package metadata read from ``cs2pkg.json`` (or a
+    registry entry). Recognized fields are ``author``, ``description``,
+    ``license``, ``homepage``, ``repository`` and ``dependencies`` (a dict of
+    ``assembly -> version`` constraints). These are stored on the manifest
+    so the metadata survives ``pack``/``import`` round trips.
+    """
     source_path = Path(source).expanduser()
     if not source_path.exists():
         raise FileNotFoundError(f"Source not found: {source_path}")
@@ -381,6 +407,14 @@ def add_plugin(
             "ini_lines": ini_lines,
             "dependencies": _detect_dependencies(plugin_type, files_root),
         }
+        if meta:
+            for field in ("author", "description", "license", "homepage", "repository"):
+                if meta.get(field):
+                    manifest[field] = meta[field]
+            pkg_deps = meta.get("dependencies")
+            if isinstance(pkg_deps, dict):
+                for assembly, req in pkg_deps.items():
+                    manifest["dependencies"].setdefault(assembly, req)
         save_manifest(repo, name, manifest)
         return manifest
     except Exception:

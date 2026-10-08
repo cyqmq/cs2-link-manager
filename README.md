@@ -78,12 +78,15 @@ cs2lm profile use competitive
 | 命令 | 说明 |
 | --- | --- |
 | `init --server <dir>` | 创建仓库骨架和 `config.json`。 |
-| `add <name> <path>` / `add <name> --url <zip-url>` / `add [<name>] --pkg <file.cs2pkg>` | 把插件包（本地目录、下载的 zip 或 `.cs2pkg`）复制进仓库，生成 `manifest.json`；`--pkg` 省略名字时用 `cs2pkg.json` 的 `name`。 |
+| `add <name> <path>` / `add <name> --url <zip-url> [--addons-subdir <dir>]` / `add [<name>] --pkg <file.cs2pkg>` | 把插件包（本地目录、下载的 zip 或 `.cs2pkg`）复制进仓库，生成 `manifest.json`；`--pkg` 省略名字时用 `cs2pkg.json` 的 `name`；`--addons-subdir` 指定 zip 内 `addons/` 树所在的子目录（如 `public`）。 |
 | `pack <name> [--out <dir>]` | 把仓库插件打包成 `.cs2pkg` 文件。 |
-| `install <name>` | 按 manifest 创建链接（幂等）。 |
+| `install <name> [--from-registry]` | 按 manifest 创建链接（幂等）；`--from-registry` 先从本地注册表添加插件再安装。 |
 | `uninstall <name>` | 删除工具创建的链接，保留仓库文件。 |
 | `enable <name>` / `disable <name>` | 创建/删除链接（同 install/uninstall）。 |
 | `list` | 显示名称、类型、版本、启用/安装状态。 |
+| `registry add <name> <url> [--description] [--type] [--addons-subdir]` | 往本地注册表添加一个插件源（URL）。 |
+| `registry list` / `registry remove <name>` | 列出 / 删除注册表条目。 |
+| `search <query>` | 在本地注册表里搜索插件（名称/描述/URL）。 |
 | `profile create <name> [plugins...]` | 创建命名 profile。 |
 | `profile use <name>` | 启用 profile 内插件、禁用其余插件，并打印差异报告。 |
 | `profile list` / `profile delete <name>` | 列出 / 删除 profile。 |
@@ -250,6 +253,20 @@ cs2lm add MyPlugin --url https://example.com/MyPlugin.zip
 工具会下载 zip、解压、定位包根目录（`addons/` 树或单个包装目录）、自动
 识别插件类型并生成清单。zip 不会存入仓库——只复制解压后的插件文件。
 
+**GitHub 源码 zip**：很多插件发布的是源码 zip，编译产物不在根目录，而是
+嵌套在 `public/addons`、`.Compiled/addons`、`release/addons` 等子目录里。
+工具会**递归查找 `addons/` 树**（限制深度 5），自动把该子目录当作包根目录。
+如果自动查找没命中，可以显式指定：
+
+```bash
+# zip 解压后是 repo/public/addons/...，就指到 public
+cs2lm add MyPlugin --url https://github.com/user/plugin/archive/refs/heads/main.zip \
+  --addons-subdir public
+```
+
+`--addons-subdir` 指向**包含 `addons/` 树的那一层目录**（不是 `addons` 本身；
+直接传 `public/addons` 也会被归一化到 `public`）。
+
 ## CSS API 依赖检查
 
 当 CSS 插件在其 `.deps.json` 中声明 `CounterStrikeSharp.API` 版本时，该
@@ -269,7 +286,8 @@ API 版本直接从
 
 `.cs2pkg` 是一个 zip 归档，用于标准化插件分发：
 
-* `cs2pkg.json` — 包元数据（name、version、plugin_type、ini_lines）；
+* `cs2pkg.json` — 包元数据（name、version、plugin_type、ini_lines，以及可选的
+  author/description/license/homepage/repository/dependencies）；
 * 插件文件树（镜像服务器布局的 `addons/` 树）。
 
 `cs2pkg.json` 的最小示例：
@@ -279,6 +297,24 @@ API 版本直接从
   "name": "MyPlugin",
   "version": "1.0.0",
   "plugin_type": "css",
+  "ini_lines": []
+}
+```
+
+可选元数据（`pack` 时从 manifest 自动写入，`add --pkg` 时写回 manifest，
+保证发布往返不丢失信息）：
+
+```json
+{
+  "name": "MyPlugin",
+  "version": "1.0.0",
+  "plugin_type": "css",
+  "author": "Alice",
+  "description": "A competitive config plugin",
+  "license": "MIT",
+  "homepage": "https://example.com",
+  "repository": "https://github.com/example/myplugin",
+  "dependencies": { "CounterStrikeSharp.API": "1.0.376" },
   "ini_lines": []
 }
 ```
@@ -312,6 +348,34 @@ cs2lm pack MyPlugin --out ./releases/
 即使包内部目录叫别的名字（例如 zip 里是 `DemoPlugin`，你写成
 `cs2lm add Renamed ./DemoPlugin/`），工具也会把插件目录统一重命名为
 `Renamed`，保证安装/卸载/profile 切换不会错乱。
+
+**多插件包会被拒绝**：如果包里 `plugins/` 下有多个插件目录（例如从某个
+服务器整包导出、包含 46 个插件），工具会直接报错并列出目录，提示拆包后
+逐个添加。cs2-link-manager 的模型是"一个仓库条目 = 一个插件"。
+
+**文件校验和**：每个纳入管理的文件都会在 manifest 里记录 `sha256`，为后续
+的完整性校验/更新比对打基础。
+
+## 本地注册表（registry）与搜索
+
+内置一个轻量本地注册表 `registry.json`，用于"一行命令装插件"：
+
+```bash
+# 添加一个插件源（URL 可以是 zip / .cs2pkg / GitHub release）
+cs2lm registry add MatchZy https://example.com/MatchZy.zip \
+  --description "Match management plugin" --type css
+
+# 搜索
+cs2lm search matchzy
+
+# 一键添加 + 安装
+cs2lm install MatchZy --from-registry
+```
+
+`install --from-registry` 会从注册表 URL 下载、添加进仓库，然后立即安装。
+注册表是纯 JSON，社区可以共享：把 `registry.json` 分发出去，别人直接
+`cs2lm registry add` 导入即可。awesome-cs2 等仓库的 manifest 列表可以转换
+成这种格式。
 
 ## 接管已有插件（adopt）
 

@@ -52,15 +52,36 @@ def extract_pkg(zip_path: str | Path, dest_dir: str | Path) -> tuple[Path, dict 
     return _find_pkg_root(dest), meta
 
 
+def find_addons_root(extract_dir: str | Path, max_depth: int = 5) -> Path | None:
+    """Recursively find the directory whose ``addons/`` subtree holds the plugin.
+
+    GitHub source zips often nest the compiled output under ``public/addons``,
+    ``.Compiled/addons``, ``release/addons`` etc. This walks a limited depth
+    and returns the parent directory of the first matching ``addons`` tree, or
+    ``None`` when no ``addons/`` directory is found.
+    """
+    root = Path(extract_dir)
+    if not root.is_dir():
+        return None
+    if (root / "addons").is_dir():
+        return root
+    for child in sorted(root.rglob("addons")):
+        if not child.is_dir():
+            continue
+        depth = len(child.relative_to(root).parts)
+        if depth <= max_depth:
+            return child.parent
+    return None
+
+
 def _find_pkg_root(extract_dir: Path) -> Path:
     """Locate the package root after extraction (addons/ tree or wrapper)."""
-    if (extract_dir / "addons").is_dir():
-        return extract_dir
+    addons_root = find_addons_root(extract_dir)
+    if addons_root is not None:
+        return addons_root
     dirs = sorted(p for p in extract_dir.iterdir() if p.is_dir())
     if len(dirs) == 1:
         child = dirs[0]
-        if (child / "addons").is_dir():
-            return child
         if list(child.glob("*.dll")) or list(child.glob("*.deps.json")):
             return child
         if (child / "bin").exists():
@@ -92,6 +113,14 @@ def build_pkg(repo: str | Path, name: str, out_path: str | Path) -> Path:
         "plugin_type": manifest.get("plugin_type", "css"),
         "ini_lines": manifest.get("ini_lines", []),
     }
+    # Preserve optional metadata so a .cs2pkg round trip keeps author,
+    # description, license, homepage, repository and API dependency info.
+    for field in ("author", "description", "license", "homepage", "repository"):
+        if manifest.get(field):
+            meta[field] = manifest[field]
+    deps = manifest.get("dependencies") or {}
+    if deps:
+        meta["dependencies"] = deps
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr(PKG_META_FILENAME, json.dumps(meta, indent=2) + "\n")
         for f in sorted(files_root.rglob("*")):

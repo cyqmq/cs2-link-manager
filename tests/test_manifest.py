@@ -138,3 +138,48 @@ def test_sanitize_name():
     with pytest.raises(ValueError):
         sanitize_name("")
     assert sanitize_name("Good Name") == "Good Name"
+
+
+def test_add_plugin_records_sha256(repo_server, tmp_path):
+    """Every managed file records its SHA-256 for future integrity checks."""
+    import hashlib
+
+    repo, _server = repo_server
+    pkg = make_css_package(tmp_path, "TestPlugin")
+    manifest = add_plugin(repo, "TestPlugin", pkg)
+    assert manifest["files"]
+    for f in manifest["files"]:
+        assert "sha256" in f
+    dll = next(f for f in manifest["files"] if f["source"].endswith("TestPlugin.dll"))
+    assert dll["sha256"] == hashlib.sha256(b"MZ").hexdigest()
+
+
+def test_add_plugin_rejects_multi_plugin_package(repo_server, tmp_path):
+    """A package with several plugin dirs is ambiguous -> refuse with a hint."""
+    repo, _server = repo_server
+    pkg = tmp_path / "Multi"
+    plugins = pkg / "addons" / "counterstrikesharp" / "plugins"
+    for name in ("One", "Two"):
+        (plugins / name).mkdir(parents=True)
+        (plugins / name / f"{name}.dll").write_bytes(b"MZ")
+        (plugins / name / f"{name}.deps.json").write_text("{}")
+    with pytest.raises(ValueError, match="plugin directories under 'plugins/'"):
+        add_plugin(repo, "Multi", pkg)
+
+
+def test_add_plugin_stores_meta_fields(repo_server, tmp_path):
+    """cs2pkg metadata (author/description/license/homepage/repository/deps) is stored."""
+    repo, _server = repo_server
+    pkg = make_css_package(tmp_path, "MetaPlugin")
+    meta = {
+        "author": "Alice",
+        "description": "A test plugin",
+        "license": "MIT",
+        "homepage": "https://example.com",
+        "repository": "https://github.com/example/plugin",
+        "dependencies": {"CounterStrikeSharp.API": "1.0.376"},
+    }
+    manifest = add_plugin(repo, "MetaPlugin", pkg, meta=meta)
+    for field in ("author", "description", "license", "homepage", "repository"):
+        assert manifest[field] == meta[field]
+    assert manifest["dependencies"]["CounterStrikeSharp.API"] == "1.0.376"

@@ -98,3 +98,47 @@ def test_load_pkg_meta_invalid(tmp_path):
     bogus = tmp_path / "bad.cs2pkg"
     bogus.write_bytes(b"not a zip")
     assert load_pkg_meta(bogus) is None
+
+
+def test_build_pkg_preserves_metadata(repo_server, tmp_path):
+    """pack keeps author/description/license/repository/dependencies in cs2pkg.json."""
+    repo, _server = repo_server
+    add_plugin(
+        repo,
+        "MyPlugin",
+        make_css_package(tmp_path, "MyPlugin"),
+        meta={
+            "author": "Alice",
+            "description": "A plugin description",
+            "license": "MIT",
+            "repository": "https://github.com/example/plugin",
+            "dependencies": {"CounterStrikeSharp.API": "1.0.376"},
+        },
+    )
+    pkg_path = build_pkg(repo, "MyPlugin", tmp_path / "dist")
+    meta = load_pkg_meta(pkg_path)
+    assert meta["author"] == "Alice"
+    assert meta["description"] == "A plugin description"
+    assert meta["license"] == "MIT"
+    assert meta["repository"] == "https://github.com/example/plugin"
+    assert meta["dependencies"] == {"CounterStrikeSharp.API": "1.0.376"}
+
+
+def test_add_from_pkg_propagates_metadata(repo_server, tmp_path):
+    """add --pkg carries author/description/license into the new manifest."""
+    src_repo, _server = repo_server
+    add_plugin(
+        src_repo,
+        "PkgPlugin",
+        make_css_package(tmp_path, "PkgPlugin"),
+        meta={"author": "Bob", "description": "pkg desc", "license": "MIT"},
+    )
+    pkg_path = build_pkg(src_repo, "PkgPlugin", tmp_path / "dist")
+
+    target_repo = init_repo(tmp_path, repo_name="target")
+    rc = cli.main(["--repo", str(target_repo), "add", "PkgPlugin", "--pkg", str(pkg_path)])
+    assert rc == 0
+    manifest = load_manifest(target_repo, "PkgPlugin")
+    assert manifest["author"] == "Bob"
+    assert manifest["description"] == "pkg desc"
+    assert manifest["license"] == "MIT"
