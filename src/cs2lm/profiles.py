@@ -31,7 +31,7 @@ def get_profile(repo: str | Path, name: str) -> dict:
     p = profile_path(repo, name)
     if not p.exists():
         raise FileNotFoundError(f"Profile not found: {name}")
-    return json.loads(p.read_text(encoding="utf-8"))
+    return json.loads(p.read_text(encoding="utf-8-sig"))
 
 
 def create_profile(repo: str | Path, name: str, plugins: list[str]) -> dict:

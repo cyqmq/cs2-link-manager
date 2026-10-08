@@ -27,7 +27,7 @@ def load_registry(repo: str | Path) -> dict:
     p = registry_path(repo)
     if p.exists():
         try:
-            data = json.loads(p.read_text(encoding="utf-8"))
+            data = json.loads(p.read_text(encoding="utf-8-sig"))
         except json.JSONDecodeError:
             return {}
         return data if isinstance(data, dict) else {}
@@ -50,6 +50,8 @@ def registry_add(
     description: str = "",
     type_hint: str | None = None,
     addons_subdir: str | None = None,
+    sha256: str | None = None,
+    requires: list[str] | None = None,
 ) -> dict:
     """Add or update a registry entry. Returns the stored entry."""
     if not name.strip():
@@ -61,6 +63,8 @@ def registry_add(
         "description": description,
         "type": type_hint,
         "addons_subdir": addons_subdir,
+        "sha256": sha256,
+        "requires": [r.strip() for r in requires if r and r.strip()] if requires else [],
     }
     data = load_registry(repo)
     data[name.strip()] = entry

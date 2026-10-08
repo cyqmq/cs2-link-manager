@@ -56,7 +56,7 @@ def _find_pkg_meta(extract_dir: Path) -> dict | None:
     """Look for a ``cs2pkg.json`` inside the extracted archive."""
     for candidate in sorted(extract_dir.rglob("cs2pkg.json")):
         try:
-            data = json.loads(candidate.read_text(encoding="utf-8"))
+            data = json.loads(candidate.read_text(encoding="utf-8-sig"))
         except (OSError, json.JSONDecodeError):
             continue
         if isinstance(data, dict):
@@ -99,7 +99,9 @@ def update_plugin(
     try:
         with tempfile.TemporaryDirectory(prefix="cs2lm-upd-") as tmp:
             tmp_path = Path(tmp)
-            source = download_and_extract(entry["url"], tmp_path)
+            source = download_and_extract(
+                entry["url"], tmp_path, expected_sha256=entry.get("sha256")
+            )
             if entry.get("addons_subdir"):
                 source = resolve_addons_subdir(tmp_path, entry["addons_subdir"])
 
@@ -213,6 +215,8 @@ def update_plugin(
                 if isinstance(pkg_meta.get("dependencies"), dict):
                     for assembly, req in pkg_meta["dependencies"].items():
                         new_manifest["dependencies"].setdefault(assembly, req)
+                if isinstance(pkg_meta.get("requires"), (list, tuple)) and pkg_meta["requires"]:
+                    new_manifest["requires"] = [str(r) for r in pkg_meta["requires"]]
             save_manifest(repo, name, new_manifest)
 
             # --- re-sync server links if the plugin was installed ----------

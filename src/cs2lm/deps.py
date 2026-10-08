@@ -287,7 +287,7 @@ def read_api_dependency(files_root: str | Path) -> str | None:
         return None
     for deps_file in sorted(root.rglob("*.deps.json")):
         try:
-            data = json.loads(deps_file.read_text(encoding="utf-8"))
+            data = json.loads(deps_file.read_text(encoding="utf-8-sig"))
         except (OSError, json.JSONDecodeError):
             continue
         libraries = data.get("libraries", {})

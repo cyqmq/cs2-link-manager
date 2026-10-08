@@ -84,7 +84,7 @@ cs2lm profile use competitive
 | `uninstall <name>` | 删除工具创建的链接，保留仓库文件。 |
 | `enable <name>` / `disable <name>` | 创建/删除链接（同 install/uninstall）。 |
 | `list` | 显示名称、类型、版本、启用/安装状态。 |
-| `registry add <name> <url> [--description] [--type] [--addons-subdir]` | 往本地注册表添加一个插件源（URL）。 |
+| `registry add <name> <url> [--description] [--type] [--addons-subdir] [--sha256 <hex>] [--requires <names>]` | 往本地注册表添加一个插件源（URL）；`--sha256` 记录 zip 校验和，`--requires` 记录依赖插件（逗号分隔）。 |
 | `registry list` / `registry remove <name>` | 列出 / 删除注册表条目。 |
 | `search <query>` | 在本地注册表里搜索插件（名称/描述/URL）。 |
 | `update [name...] [--yes]` | 从注册表 URL 下载新包，按 SHA-256 比对并更新仓库文件；插件已安装时自动重装刷新链接。默认更新注册表里所有已在仓库的插件，可指定名称；`--yes` 跳过确认。 |
@@ -316,9 +316,14 @@ API 版本直接从
   "homepage": "https://example.com",
   "repository": "https://github.com/example/myplugin",
   "dependencies": { "CounterStrikeSharp.API": "1.0.376" },
+  "requires": ["SharedLib"],
   "ini_lines": []
 }
 ```
+
+`requires` 是本插件的**插件级依赖**列表（别的仓库插件名），安装时工具会先
+自动安装这些依赖；若依赖不在仓库里则报错。禁用被其他已启用插件依赖的插件
+也会被拒绝。
 
 文件树放在与 `cs2pkg.json` 同目录下的 `addons/` 里。插件作者可以直接照此
 结构打包发布。
@@ -404,6 +409,40 @@ cs2lm update --yes
    生效。
 
 `--dry-run` 只报告差异不修改任何文件。
+
+## 插件依赖管理（requires）
+
+插件可以声明依赖其他仓库插件（如共享库）。manifest 里的 `requires` 是插件名
+列表，`.cs2pkg` 和注册表条目都可以携带：
+
+```json
+{ "name": "MainPlugin", "requires": ["SharedLib"] }
+```
+
+行为：
+
+* `cs2lm install MainPlugin` 会**先自动安装** `SharedLib`（递归解析依赖）；
+* 依赖不在仓库里 → 报错并提示先添加；
+* 依赖循环（A→B→A）→ 报错拒绝；
+* `cs2lm uninstall SharedLib` 时，如果 `MainPlugin` 已启用且依赖它，会**拒绝
+  卸载**并提示先禁用依赖方；
+* `pack` / `add --pkg` / `registry add --requires` 都会保留依赖信息。
+
+这样"插件装上了但缺共享库跑不起来"的问题会在安装阶段就被拦住。
+
+## 校验和与完整性
+
+每个托管文件都在 manifest 里记录了 `sha256`；注册表条目还可以记录整个 zip
+的 `sha256`：
+
+```bash
+cs2lm registry add MyPlugin https://example.com/MyPlugin.zip \
+  --sha256 <zip 的 sha256 十六进制>
+```
+
+`install --from-registry` 和 `update` 下载后会先校验 zip 哈希，不匹配直接
+拒绝——下载损坏或被替换会立刻发现。公钥签名体系暂不引入：单维护者场景下，
+URL + 文件级/zip 级 SHA-256 已覆盖完整性，签名只会增加维护负担。
 
 ## 接管已有插件（adopt）
 

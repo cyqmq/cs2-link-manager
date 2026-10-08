@@ -1,6 +1,7 @@
 """Download and extract a plugin zip package from a URL."""
 from __future__ import annotations
 
+import hashlib
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -12,12 +13,18 @@ class DownloadError(Exception):
     """Raised when a plugin package cannot be downloaded or extracted."""
 
 
-def download_and_extract(url: str, dest_dir: str | Path) -> Path:
+def download_and_extract(
+    url: str,
+    dest_dir: str | Path,
+    expected_sha256: str | None = None,
+) -> Path:
     """Download a zip from ``url`` and extract it into ``dest_dir``.
 
+    When ``expected_sha256`` is given, the downloaded bytes are verified
+    against it before extraction (registry ``--sha256`` integrity check).
     Returns the plugin package root directory inside ``dest_dir`` (a path that
     can be passed to ``manifest.add_plugin``). Raises :class:`DownloadError`
-    on network, HTTP, or zip failures.
+    on network, HTTP, checksum, or zip failures.
     """
     dest = Path(dest_dir)
     dest.mkdir(parents=True, exist_ok=True)
@@ -27,6 +34,13 @@ def download_and_extract(url: str, dest_dir: str | Path) -> Path:
             data = response.read()
     except Exception as exc:  # noqa: BLE001 - wrap all network errors
         raise DownloadError(f"Failed to download {url}: {exc}") from exc
+    if expected_sha256:
+        actual = hashlib.sha256(data).hexdigest()
+        if actual.lower() != expected_sha256.lower():
+            raise DownloadError(
+                f"Checksum mismatch for {url}: expected {expected_sha256}, "
+                f"got {actual}."
+            )
     try:
         zip_path.write_bytes(data)
         with zipfile.ZipFile(zip_path) as zf:

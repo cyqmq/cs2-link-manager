@@ -121,6 +121,9 @@ def build_pkg(repo: str | Path, name: str, out_path: str | Path) -> Path:
     deps = manifest.get("dependencies") or {}
     if deps:
         meta["dependencies"] = deps
+    requires = manifest.get("requires")
+    if requires:
+        meta["requires"] = list(requires)
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr(PKG_META_FILENAME, json.dumps(meta, indent=2) + "\n")
         for f in sorted(files_root.rglob("*")):

@@ -63,6 +63,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="With --url: subdirectory inside the extracted zip whose addons/ "
         "tree holds the plugin (e.g. 'public' for public/addons)",
     )
+    p_add.add_argument(
+        "--sha256",
+        default=None,
+        help="With --url: expected SHA-256 of the downloaded zip (integrity check)",
+    )
 
     p_pack = sub.add_parser("pack", help="Package a repository plugin as a .cs2pkg file")
     p_pack.add_argument("name", help="Plugin name")
@@ -143,6 +148,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_registry_add.add_argument("--description", default="")
     p_registry_add.add_argument("--type", choices=["css", "metamod"], default=None)
     p_registry_add.add_argument("--addons-subdir", default=None)
+    p_registry_add.add_argument("--sha256", default=None, help="Expected SHA-256 of the downloaded zip")
+    p_registry_add.add_argument("--requires", default=None, help="Comma-separated plugin names this plugin requires")
     p_registry_remove = p_registry_sub.add_parser("remove", help="Remove a registry entry")
     p_registry_remove.add_argument("name")
     p_registry_list = p_registry_sub.add_parser("list", help="List registry entries")
@@ -201,7 +208,9 @@ def cmd_add(args: argparse.Namespace, logger: Logger) -> int:
     if args.url:
         with tempfile.TemporaryDirectory(prefix="cs2lm-url-") as tmp:
             try:
-                source = download_and_extract(args.url, tmp)
+                source = download_and_extract(
+                    args.url, tmp, expected_sha256=args.sha256
+                )
             except DownloadError as exc:
                 raise ValueError(str(exc)) from exc
             if args.addons_subdir:
@@ -272,7 +281,9 @@ def cmd_install(args: argparse.Namespace, logger: Logger) -> int:
         if args.name not in list_plugins(args.repo):
             with tempfile.TemporaryDirectory(prefix="cs2lm-reg-") as tmp:
                 try:
-                    source = download_and_extract(entry["url"], tmp)
+                    source = download_and_extract(
+                        entry["url"], tmp, expected_sha256=entry.get("sha256")
+                    )
                 except DownloadError as exc:
                     raise ValueError(str(exc)) from exc
                 if entry.get("addons_subdir"):
@@ -457,6 +468,8 @@ def cmd_registry(args: argparse.Namespace, logger: Logger) -> int:
             description=args.description,
             type_hint=args.type,
             addons_subdir=args.addons_subdir,
+            sha256=args.sha256,
+            requires=args.requires.split(",") if args.requires else [],
         )
         print(f"Registry: added '{args.name}' -> {args.url}")
         return 0

@@ -66,7 +66,7 @@ def load_manifest(repo: str | Path, name: str) -> dict:
     p = plugin_dir(repo, name) / MANIFEST_FILENAME
     if not p.exists():
         raise FileNotFoundError(f"Plugin not found in repository: {name}")
-    return json.loads(p.read_text(encoding="utf-8"))
+    return json.loads(p.read_text(encoding="utf-8-sig"))
 
 
 def save_manifest(repo: str | Path, name: str, manifest: dict) -> None:
@@ -415,6 +415,9 @@ def add_plugin(
             if isinstance(pkg_deps, dict):
                 for assembly, req in pkg_deps.items():
                     manifest["dependencies"].setdefault(assembly, req)
+            requires = meta.get("requires")
+            if isinstance(requires, (list, tuple)) and requires:
+                manifest["requires"] = [str(r) for r in requires]
         save_manifest(repo, name, manifest)
         return manifest
     except Exception:

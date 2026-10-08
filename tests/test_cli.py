@@ -205,3 +205,71 @@ def test_cli_registry_roundtrip(repo_server, tmp_path):
     assert "RegPlugin" in list_plugins(repo)
     installed = [p["name"] for p in PluginManager(repo).list_plugins() if p["installed"]]
     assert "RegPlugin" in installed
+
+
+def test_cli_registry_sha256_mismatch(repo_server, tmp_path, capsys):
+    """install --from-registry rejects a zip whose checksum does not match."""
+    import hashlib
+    import zipfile
+
+    repo, _server = repo_server
+    pkg = make_css_package(tmp_path, "HashPlugin")
+    zip_path = tmp_path / "hash.zip"
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for f in sorted(pkg.rglob("*")):
+            if f.is_file():
+                zf.write(f, f.relative_to(pkg).as_posix())
+
+    rc = run(
+        [
+            "--repo",
+            str(repo),
+            "registry",
+            "add",
+            "HashPlugin",
+            zip_path.as_uri(),
+            "--sha256",
+            "0" * 64,
+        ]
+    )
+    assert rc == 0
+    rc = run(["--repo", str(repo), "install", "HashPlugin", "--from-registry"])
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert "Checksum mismatch" in captured.err
+
+
+def test_cli_registry_sha256_match(repo_server, tmp_path):
+    """A matching registry SHA-256 installs successfully."""
+    import hashlib
+    import zipfile
+
+    from cs2lm.installer import PluginManager
+
+    repo, _server = repo_server
+    pkg = make_css_package(tmp_path, "HashPlugin")
+    zip_path = tmp_path / "hash.zip"
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for f in sorted(pkg.rglob("*")):
+            if f.is_file():
+                zf.write(f, f.relative_to(pkg).as_posix())
+
+    digest = hashlib.sha256(zip_path.read_bytes()).hexdigest()
+    assert (
+        run(
+            [
+                "--repo",
+                str(repo),
+                "registry",
+                "add",
+                "HashPlugin",
+                zip_path.as_uri(),
+                "--sha256",
+                digest,
+            ]
+        )
+        == 0
+    )
+    assert run(["--repo", str(repo), "install", "HashPlugin", "--from-registry"]) == 0
+    installed = [p["name"] for p in PluginManager(repo).list_plugins() if p["installed"]]
+    assert "HashPlugin" in installed

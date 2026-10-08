@@ -54,7 +54,7 @@ class PluginManager:
     def _load_state(self) -> dict:
         if self.state_path.exists():
             try:
-                return json.loads(self.state_path.read_text(encoding="utf-8"))
+                return json.loads(self.state_path.read_text(encoding="utf-8-sig"))
             except json.JSONDecodeError as exc:
                 raise InstallError(f"Invalid state file: {self.state_path}") from exc
         return {"links": []}
@@ -81,9 +81,44 @@ class PluginManager:
         state = self._load_state()
         return bool(self._state_links_for(state, name))
 
+    def _enabled_dependents(self, name: str) -> list[str]:
+        """Installed plugins whose ``requires`` list contains ``name``."""
+        dependents = []
+        for p in list_plugins(self.repo):
+            p_manifest = load_manifest(self.repo, p)
+            if name in p_manifest.get("requires", []) and self.plugin_has_links(p):
+                dependents.append(p)
+        return dependents
+
     # -- install ------------------------------------------------------------
 
     def install(self, name: str) -> None:
+        """Install a plugin, auto-installing any required plugins first."""
+        self._install_with_deps(name, set())
+
+    def _install_with_deps(self, name: str, seen: set[str]) -> None:
+        if name in seen:
+            raise InstallError(
+                "Dependency cycle detected: "
+                + " -> ".join([*sorted(seen), name])
+            )
+        seen = seen | {name}
+        manifest = load_manifest(self.repo, name)
+        for dep in manifest.get("requires", []):
+            if not dep or dep == name:
+                continue
+            if dep not in list_plugins(self.repo):
+                raise InstallError(
+                    f"{name} requires plugin '{dep}', which is not in the "
+                    "repository. Add it first with 'cs2lm add <name> <path>' "
+                    "or 'cs2lm install <name> --from-registry'."
+                )
+            if not self.plugin_has_links(dep):
+                self.logger.info("install", f"{name}: installing dependency {dep}")
+                self._install_with_deps(dep, seen)
+        self._install_plugin(name)
+
+    def _install_plugin(self, name: str) -> None:
         manifest = load_manifest(self.repo, name)
         state = self._load_state()
         created: list[dict] = []
@@ -215,6 +250,13 @@ class PluginManager:
 
     def uninstall(self, name: str) -> None:
         manifest = load_manifest(self.repo, name)
+        if manifest.get("enabled"):
+            dependents = self._enabled_dependents(name)
+            if dependents:
+                raise InstallError(
+                    f"Cannot disable '{name}': enabled plugin(s) require it: "
+                    f"{', '.join(sorted(dependents))}. Disable them first."
+                )
         state = self._load_state()
         plugin_records = self._state_links_for(state, name)
         for rec in plugin_records:
@@ -263,7 +305,7 @@ class PluginManager:
             return
 
         if install:
-            content = ini_path.read_text(encoding="utf-8") if ini_path.exists() else ""
+            content = ini_path.read_text(encoding="utf-8-sig") if ini_path.exists() else ""
             existing = [ln.strip() for ln in content.splitlines()]
             new_lines = [ln for ln in lines if ln not in existing]
             if new_lines:
@@ -287,7 +329,7 @@ class PluginManager:
                 )
         else:
             if ini_path.exists():
-                content_lines = ini_path.read_text(encoding="utf-8").splitlines()
+                content_lines = ini_path.read_text(encoding="utf-8-sig").splitlines()
                 remaining = [ln for ln in content_lines if ln.strip() not in lines]
                 if len(remaining) != len(content_lines):
                     linking.backup_target(

@@ -44,7 +44,7 @@ def _versions_equal(a: str, b: str) -> bool:
 def load_state(repo: str | Path) -> dict:
     p = Path(repo) / STATE_REL
     if p.exists():
-        return json.loads(p.read_text(encoding="utf-8"))
+        return json.loads(p.read_text(encoding="utf-8-sig"))
     return {"links": []}
 
 

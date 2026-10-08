@@ -22,7 +22,7 @@ def load_config(repo_path: str | Path) -> dict:
     if not p.exists():
         raise FileNotFoundError(f"Repository not initialized: {p}")
     try:
-        return json.loads(p.read_text(encoding="utf-8"))
+        return json.loads(p.read_text(encoding="utf-8-sig"))
     except json.JSONDecodeError as exc:
         raise ValueError(f"Invalid config file: {p}") from exc
 

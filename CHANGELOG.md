@@ -39,8 +39,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   old manifest are touched), regenerates the manifest, and re-installs the
   plugin if it was installed. `--yes` skips confirmation; `--dry-run`
   reports without changing anything.
+- **plugin dependencies**: manifest / cs2pkg.json / registry entries can
+  declare `requires` (list of plugin names). `install` auto-installs missing
+  dependencies (with cycle detection), and `uninstall` refuses to disable a
+  plugin that another installed plugin requires.
+- **zip checksums**: `registry add --sha256 <hex>` records the expected
+  SHA-256 of the source zip; `install --from-registry` and `update` verify it
+  before extraction.
+- **BOM tolerance**: all JSON/text reads now use `utf-8-sig`, so manifests
+  edited with BOM-writing editors (e.g. Windows PowerShell) load cleanly.
 - **README**: documents the registry, URL subdirs, package metadata,
-  multi-plugin rejection, and the update workflow.
+  multi-plugin rejection, the update workflow, dependency management and
+  checksum verification.
 
 ### Changed
 
