@@ -273,3 +273,43 @@ def test_cli_registry_sha256_match(repo_server, tmp_path):
     assert run(["--repo", str(repo), "install", "HashPlugin", "--from-registry"]) == 0
     installed = [p["name"] for p in PluginManager(repo).list_plugins() if p["installed"]]
     assert "HashPlugin" in installed
+
+
+def test_cli_registry_multi_plugin(repo_server, tmp_path):
+    """A registry entry with ``plugins`` adds all plugins, installs the named one."""
+    import zipfile
+
+    from conftest import make_multi_css_package
+    from cs2lm.installer import PluginManager
+    from cs2lm.manifest import list_plugins
+
+    repo, _server = repo_server
+    pkg = make_multi_css_package(
+        tmp_path, ["SimpleAdmin", "FunCommands", "StealthModule"]
+    )
+    zip_path = tmp_path / "multi.zip"
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for f in sorted(pkg.rglob("*")):
+            if f.is_file():
+                zf.write(f, f.relative_to(pkg).as_posix())
+
+    assert (
+        run(
+            [
+                "--repo",
+                str(repo),
+                "registry",
+                "add",
+                "SimpleAdmin",
+                zip_path.as_uri(),
+                "--plugins",
+                "SimpleAdmin,FunCommands,StealthModule",
+            ]
+        )
+        == 0
+    )
+
+    assert run(["--repo", str(repo), "install", "SimpleAdmin", "--from-registry"]) == 0
+    assert set(list_plugins(repo)) == {"SimpleAdmin", "FunCommands", "StealthModule"}
+    installed = {p["name"] for p in PluginManager(repo).list_plugins() if p["installed"]}
+    assert "SimpleAdmin" in installed

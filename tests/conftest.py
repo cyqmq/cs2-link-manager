@@ -84,6 +84,20 @@ def make_css_package(tmp_path: Path, name: str = "TestPlugin", with_configs: boo
     return pkg
 
 
+def make_multi_css_package(tmp_path: Path, names: list[str], package_name: str = "MultiPkg") -> Path:
+    """Build a package with several plugin directories under plugins/."""
+    pkg = tmp_path / package_name
+    for name in names:
+        plugins_dir = pkg / "addons" / "counterstrikesharp" / "plugins" / name
+        plugins_dir.mkdir(parents=True)
+        (plugins_dir / f"{name}.dll").write_bytes(b"MZ")
+        (plugins_dir / f"{name}.deps.json").write_text("{}")
+        cfg_dir = pkg / "addons" / "counterstrikesharp" / "configs" / "plugins" / name
+        cfg_dir.mkdir(parents=True)
+        (cfg_dir / f"{name}.json").write_text("{}")
+    return pkg
+
+
 @pytest.fixture
 def css_package(tmp_path):
     return make_css_package(tmp_path, "TestPlugin")

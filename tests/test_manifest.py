@@ -9,7 +9,7 @@ from cs2lm.manifest import (
     sanitize_name,
 )
 
-from conftest import make_css_package
+from conftest import make_css_package, make_multi_css_package
 
 
 def test_add_css_package_with_addons_tree(repo_server, tmp_path):
@@ -183,3 +183,58 @@ def test_add_plugin_stores_meta_fields(repo_server, tmp_path):
     for field in ("author", "description", "license", "homepage", "repository"):
         assert manifest[field] == meta[field]
     assert manifest["dependencies"]["CounterStrikeSharp.API"] == "1.0.376"
+
+
+def test_split_css_plugins_creates_per_plugin_trees(tmp_path):
+    """A multi-plugin package splits into independent addons/ trees."""
+    from cs2lm.manifest import split_css_plugins
+
+    pkg = make_multi_css_package(
+        tmp_path, ["SimpleAdmin", "FunCommands", "StealthModule"]
+    )
+    base = tmp_path / "split"
+    base.mkdir()
+    results = split_css_plugins(
+        pkg, ["SimpleAdmin", "FunCommands", "StealthModule"], base
+    )
+    assert [n for n, _ in results] == ["SimpleAdmin", "FunCommands", "StealthModule"]
+    for name, src in results:
+        assert (src / "addons" / "counterstrikesharp" / "plugins" / name).is_dir()
+        # Only the plugin's own configs dir is included, not the other plugins'.
+        cfg = src / "addons" / "counterstrikesharp" / "configs" / "plugins"
+        assert (cfg / name).is_dir()
+        assert len(list(cfg.iterdir())) == 1
+
+
+def test_split_css_plugins_missing_name_raises(tmp_path):
+    """Splitting with a name absent from the package fails clearly."""
+    from cs2lm.manifest import split_css_plugins
+
+    pkg = make_multi_css_package(tmp_path, ["SimpleAdmin", "FunCommands"])
+    base = tmp_path / "split"
+    base.mkdir()
+    with pytest.raises(ValueError, match="not found in package"):
+        split_css_plugins(pkg, ["Nope"], base)
+
+
+def test_add_split_creates_separate_repo_entries(repo_server, tmp_path):
+    """Adding each split tree produces one repo plugin per package plugin."""
+    from cs2lm.manifest import load_manifest, split_css_plugins
+
+    repo, _server = repo_server
+    pkg = make_multi_css_package(
+        tmp_path, ["SimpleAdmin", "FunCommands", "StealthModule"]
+    )
+    base = tmp_path / "split"
+    base.mkdir()
+    for name, src in split_css_plugins(
+        pkg, ["SimpleAdmin", "FunCommands", "StealthModule"], base
+    ):
+        add_plugin(repo, name, src)
+    assert list_plugins(repo) == ["FunCommands", "SimpleAdmin", "StealthModule"]
+    for name in ("SimpleAdmin", "FunCommands", "StealthModule"):
+        sources = {f["source"] for f in load_manifest(repo, name)["files"]}
+        assert any(f"plugins/{name}/" in s for s in sources)
+        for other in ("SimpleAdmin", "FunCommands", "StealthModule"):
+            if other != name:
+                assert not any(f"plugins/{other}/" in s for s in sources)

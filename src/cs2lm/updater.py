@@ -106,8 +106,16 @@ def update_plugin(
                 source = resolve_addons_subdir(tmp_path, entry["addons_subdir"])
 
             plugin_type = classify_plugin(source, entry.get("type"))
+            plugins = entry.get("plugins") or []
+            if len(plugins) > 1:
+                from cs2lm.manifest import split_css_plugins
+
+                split_sources = split_css_plugins(source, [name], tmp_path)
+                plugin_source = split_sources[0][1]
+            else:
+                plugin_source = source
             files_root = tmp_path / FILES_DIR
-            _copy_source(plugin_type, source, name, files_root)
+            _copy_source(plugin_type, plugin_source, name, files_root)
             new_files = _walk_files(files_root)
             _validate_no_core_overwrites(new_files)
             for f in new_files:

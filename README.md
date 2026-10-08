@@ -288,7 +288,7 @@ API 版本直接从
 `.cs2pkg` 是一个 zip 归档，用于标准化插件分发：
 
 * `cs2pkg.json` — 包元数据（name、version、plugin_type、ini_lines，以及可选的
-  author/description/license/homepage/repository/dependencies）；
+  author/description/license/homepage/repository/dependencies/plugins）；
 * 插件文件树（镜像服务器布局的 `addons/` 树）。
 
 `cs2pkg.json` 的最小示例：
@@ -317,6 +317,7 @@ API 版本直接从
   "repository": "https://github.com/example/myplugin",
   "dependencies": { "CounterStrikeSharp.API": "1.0.376" },
   "requires": ["SharedLib"],
+  "plugins": ["MyPlugin", "MyPluginExtra"],
   "ini_lines": []
 }
 ```
@@ -324,6 +325,10 @@ API 版本直接从
 `requires` 是本插件的**插件级依赖**列表（别的仓库插件名），安装时工具会先
 自动安装这些依赖；若依赖不在仓库里则报错。禁用被其他已启用插件依赖的插件
 也会被拒绝。
+
+`plugins` 用于**多插件包**：当包里 `plugins/` 下有多个插件目录时，声明
+`plugins` 列表让 `add --pkg` 自动拆成多个仓库条目（每个条目一个插件）。
+只有一个插件时无需声明。
 
 文件树放在与 `cs2pkg.json` 同目录下的 `addons/` 里。插件作者可以直接照此
 结构打包发布。
@@ -355,9 +360,33 @@ cs2lm pack MyPlugin --out ./releases/
 `cs2lm add Renamed ./DemoPlugin/`），工具也会把插件目录统一重命名为
 `Renamed`，保证安装/卸载/profile 切换不会错乱。
 
-**多插件包会被拒绝**：如果包里 `plugins/` 下有多个插件目录（例如从某个
-服务器整包导出、包含 46 个插件），工具会直接报错并列出目录，提示拆包后
-逐个添加。cs2-link-manager 的模型是"一个仓库条目 = 一个插件"。
+**多插件包支持拆分**：如果包里 `plugins/` 下有多个插件目录（例如 SimpleAdmin
+的 Release 包含主插件 + FunCommands + StealthModule 三个插件目录），
+`cs2lm` 默认会报错并列出目录。此时可以用 `--plugins` 显式声明插件目录名，
+工具会把包拆成多个仓库条目（一个仓库条目 = 一个插件）：
+
+```bash
+# 从 URL 添加多插件包：拆成 3 个独立仓库条目
+cs2lm add --url https://github.com/x/SimpleAdmin/releases/download/v1.0/SimpleAdmin.zip \
+  --plugins SimpleAdmin,FunCommands,StealthModule
+
+# 本地目录同样支持
+cs2lm add --plugins SimpleAdmin,FunCommands,StealthModule ./SimpleAdmin/
+
+# .cs2pkg 包可以在 cs2pkg.json 里声明 plugins 字段，add --pkg 自动拆分
+cs2lm add --pkg ./SimpleAdmin.cs2pkg
+```
+
+拆分会按插件名切分各自的 `plugins/<Name>`、`configs/plugins/<Name>`、
+`lang/<Name>`、`gamedata/<Name>` 等目录，每个插件独立安装/卸载/更新。
+注册表条目也可以用 `--plugins` 声明多插件包：
+
+```bash
+cs2lm registry add SimpleAdmin https://.../SimpleAdmin.zip \
+  --plugins SimpleAdmin,FunCommands,StealthModule
+cs2lm install SimpleAdmin --from-registry   # 添加全部 3 个，安装 SimpleAdmin
+cs2lm update SimpleAdmin                    # 同时更新 3 个插件
+```
 
 **文件校验和**：每个纳入管理的文件都会在 manifest 里记录 `sha256`，为后续
 的完整性校验/更新比对打基础。

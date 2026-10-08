@@ -187,3 +187,67 @@ def test_cli_update_dry_run_flag(repo_server, tmp_path):
     manifest_before = load_manifest(repo, "DryUpd")
     assert cli.main(["--repo", str(repo), "--dry-run", "update", "DryUpd"]) == 0
     assert load_manifest(repo, "DryUpd") == manifest_before
+
+
+def test_cli_update_multi_plugin(repo_server, tmp_path):
+    """cs2lm update <pkg> --yes updates each plugin in a multi-plugin entry."""
+    from conftest import make_multi_css_package
+    from cs2lm.manifest import split_css_plugins
+
+    repo, _server = repo_server
+    pkg = make_multi_css_package(tmp_path, ["SimpleAdmin", "FunCommands"])
+    base = tmp_path / "split"
+    base.mkdir()
+    for name, src in split_css_plugins(pkg, ["SimpleAdmin", "FunCommands"], base):
+        add_plugin(repo, name, src)
+
+    zip_path = _zip_package(pkg, tmp_path / "v1.zip")
+    assert (
+        cli.main(
+            [
+                "--repo",
+                str(repo),
+                "registry",
+                "add",
+                "SimpleAdmin",
+                zip_path.as_uri(),
+                "--plugins",
+                "SimpleAdmin,FunCommands",
+            ]
+        )
+        == 0
+    )
+
+    # v2: only SimpleAdmin.dll changes.
+    dll = pkg / "addons" / "counterstrikesharp" / "plugins" / "SimpleAdmin" / "SimpleAdmin.dll"
+    dll.write_bytes(b"V2")
+    zip_path2 = _zip_package(pkg, tmp_path / "v2.zip")
+    assert (
+        cli.main(
+            [
+                "--repo",
+                str(repo),
+                "registry",
+                "add",
+                "SimpleAdmin",
+                zip_path2.as_uri(),
+                "--plugins",
+                "SimpleAdmin,FunCommands",
+            ]
+        )
+        == 0
+    )
+
+    assert cli.main(["--repo", str(repo), "update", "SimpleAdmin", "--yes"]) == 0
+
+    sa_manifest = load_manifest(repo, "SimpleAdmin")
+    sa_dll = next(
+        f for f in sa_manifest["files"] if f["source"].endswith("SimpleAdmin.dll")
+    )
+    assert sa_dll["sha256"] == hashlib.sha256(b"V2").hexdigest()
+
+    fc_manifest = load_manifest(repo, "FunCommands")
+    fc_dll = next(
+        f for f in fc_manifest["files"] if f["source"].endswith("FunCommands.dll")
+    )
+    assert fc_dll["sha256"] == hashlib.sha256(b"MZ").hexdigest()

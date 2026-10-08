@@ -68,6 +68,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="With --url: expected SHA-256 of the downloaded zip (integrity check)",
     )
+    p_add.add_argument(
+        "--plugins",
+        default=None,
+        help="Split a multi-plugin package: comma-separated plugin directory "
+        "names inside the package to add as separate repository entries",
+    )
 
     p_pack = sub.add_parser("pack", help="Package a repository plugin as a .cs2pkg file")
     p_pack.add_argument("name", help="Plugin name")
@@ -150,6 +156,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_registry_add.add_argument("--addons-subdir", default=None)
     p_registry_add.add_argument("--sha256", default=None, help="Expected SHA-256 of the downloaded zip")
     p_registry_add.add_argument("--requires", default=None, help="Comma-separated plugin names this plugin requires")
+    p_registry_add.add_argument("--plugins", default=None, help="Comma-separated plugin directory names this package contains (multi-plugin split)")
     p_registry_remove = p_registry_sub.add_parser("remove", help="Remove a registry entry")
     p_registry_remove.add_argument("name")
     p_registry_list = p_registry_sub.add_parser("list", help="List registry entries")
@@ -192,7 +199,7 @@ def cmd_init(args: argparse.Namespace, logger: Logger) -> int:
 
 def cmd_add(args: argparse.Namespace, logger: Logger) -> int:
     from cs2lm.cs2pkg import extract_pkg
-    from cs2lm.manifest import add_plugin
+    from cs2lm.manifest import add_plugin, split_css_plugins
     from cs2lm.url_add import (
         DownloadError,
         download_and_extract,
@@ -205,8 +212,30 @@ def cmd_add(args: argparse.Namespace, logger: Logger) -> int:
     if not any(sources):
         raise ValueError("Provide a local path, --url, or --pkg for the plugin package")
 
+    def split_names(value: str | None) -> list[str]:
+        if not value:
+            return []
+        return [v.strip() for v in value.split(",") if v.strip()]
+
+    def add_split(names: list[str], source: str | Path, base: Path, meta: dict | None = None) -> list[dict]:
+        """Split a multi-plugin CSS package and add each plugin separately."""
+        manifests = []
+        for name, src in split_css_plugins(source, names, base):
+            manifests.append(
+                add_plugin(
+                    args.repo,
+                    name,
+                    src,
+                    type_hint=args.type,
+                    version=args.version,
+                    meta=meta,
+                )
+            )
+        return manifests
+
     if args.url:
         with tempfile.TemporaryDirectory(prefix="cs2lm-url-") as tmp:
+            tmp = Path(tmp)
             try:
                 source = download_and_extract(
                     args.url, tmp, expected_sha256=args.sha256
@@ -215,6 +244,11 @@ def cmd_add(args: argparse.Namespace, logger: Logger) -> int:
                 raise ValueError(str(exc)) from exc
             if args.addons_subdir:
                 source = resolve_addons_subdir(tmp, args.addons_subdir)
+            names = split_names(args.plugins)
+            if names:
+                manifests = add_split(names, source, tmp)
+                logger.info("add", f"added {len(manifests)} plugins from package")
+                return 0
             if not args.name:
                 raise ValueError("A plugin name is required when adding from a URL.")
             manifest = add_plugin(
@@ -226,10 +260,16 @@ def cmd_add(args: argparse.Namespace, logger: Logger) -> int:
             )
     elif args.pkg:
         with tempfile.TemporaryDirectory(prefix="cs2lm-pkg-") as tmp:
+            tmp = Path(tmp)
             source, meta = extract_pkg(args.pkg, tmp)
             type_hint = args.type or (meta or {}).get("plugin_type")
             version = args.version or (meta or {}).get("version")
-            plugin_name = args.name or (meta or {}).get("name")
+            names = split_names(args.plugins) or (meta or {}).get("plugins") or []
+            if len(names) > 1:
+                manifests = add_split(names, source, tmp, meta)
+                logger.info("add", f"added {len(manifests)} plugins from package")
+                return 0
+            plugin_name = args.name or (names[0] if names else None) or (meta or {}).get("name")
             if not plugin_name:
                 raise ValueError(
                     "No plugin name given and cs2pkg.json does not provide one."
@@ -243,6 +283,12 @@ def cmd_add(args: argparse.Namespace, logger: Logger) -> int:
                 meta=meta,
             )
     else:
+        if args.plugins:
+            names = split_names(args.plugins)
+            with tempfile.TemporaryDirectory(prefix="cs2lm-split-") as tmp:
+                manifests = add_split(names, args.path, Path(tmp))
+            logger.info("add", f"added {len(manifests)} plugins from package")
+            return 0
         if not args.name:
             raise ValueError("A plugin name is required when adding from a local path.")
         manifest = add_plugin(
@@ -279,6 +325,8 @@ def cmd_install(args: argparse.Namespace, logger: Logger) -> int:
                 "'cs2lm registry add <name> <url>'."
             )
         if args.name not in list_plugins(args.repo):
+            from cs2lm.manifest import split_css_plugins
+
             with tempfile.TemporaryDirectory(prefix="cs2lm-reg-") as tmp:
                 try:
                     source = download_and_extract(
@@ -288,14 +336,30 @@ def cmd_install(args: argparse.Namespace, logger: Logger) -> int:
                     raise ValueError(str(exc)) from exc
                 if entry.get("addons_subdir"):
                     source = resolve_addons_subdir(tmp, entry["addons_subdir"])
-                add_plugin(
-                    args.repo,
-                    args.name,
-                    source,
-                    type_hint=entry.get("type"),
-                    meta=entry,
-                )
-            print(f"Added '{args.name}' from registry.")
+                plugin_names = entry.get("plugins") or []
+                if len(plugin_names) > 1:
+                    added = 0
+                    for name, split_src in split_css_plugins(
+                        source, plugin_names, Path(tmp)
+                    ):
+                        add_plugin(
+                            args.repo,
+                            name,
+                            split_src,
+                            type_hint=entry.get("type"),
+                            meta=entry,
+                        )
+                        added += 1
+                    print(f"Added {added} plugins from registry package '{args.name}'.")
+                else:
+                    add_plugin(
+                        args.repo,
+                        args.name,
+                        source,
+                        type_hint=entry.get("type"),
+                        meta=entry,
+                    )
+                    print(f"Added '{args.name}' from registry.")
 
     manager = PluginManager(
         args.repo,
@@ -470,6 +534,7 @@ def cmd_registry(args: argparse.Namespace, logger: Logger) -> int:
             addons_subdir=args.addons_subdir,
             sha256=args.sha256,
             requires=args.requires.split(",") if args.requires else [],
+            plugins=args.plugins.split(",") if args.plugins else [],
         )
         print(f"Registry: added '{args.name}' -> {args.url}")
         return 0
@@ -523,33 +588,35 @@ def cmd_update(args: argparse.Namespace, logger: Logger) -> int:
         if not entry:
             print(f"Skipping {name}: no registry entry.")
             continue
-        result = update_plugin(
-            args.repo,
-            name,
-            entry,
-            dry_run=args.dry_run,
-            yes=args.yes,
-            logger=logger,
-        )
-        results.append(result)
-        status = result["status"]
-        if status == "up-to-date":
-            print(f"{name}: already up to date.")
-        elif status == "not-in-repo":
-            print(f"{name}: {result['message']}")
-        elif status == "aborted":
-            print(f"{name}: update aborted.")
-        elif status == "changed":
-            print(
-                f"{name}: {result['old_version']} -> {result['new_version']} "
-                f"({len(result['added'])} added, {len(result['removed'])} removed, "
-                f"{len(result['changed'])} changed"
-                f"{', dry-run' if result.get('dry_run') else ''})."
+        target_names = entry.get("plugins") or [name]
+        for plugin in target_names:
+            result = update_plugin(
+                args.repo,
+                plugin,
+                entry,
+                dry_run=args.dry_run,
+                yes=args.yes,
+                logger=logger,
             )
-        elif status == "error":
-            print(f"{name}: update failed: {result['message']}")
-        else:  # pragma: no cover
-            print(f"{name}: unknown update status {status!r}.")
+            results.append(result)
+            status = result["status"]
+            if status == "up-to-date":
+                print(f"{plugin}: already up to date.")
+            elif status == "not-in-repo":
+                print(f"{plugin}: {result['message']}")
+            elif status == "aborted":
+                print(f"{plugin}: update aborted.")
+            elif status == "changed":
+                print(
+                    f"{plugin}: {result['old_version']} -> {result['new_version']} "
+                    f"({len(result['added'])} added, {len(result['removed'])} removed, "
+                    f"{len(result['changed'])} changed"
+                    f"{', dry-run' if result.get('dry_run') else ''})."
+                )
+            elif status == "error":
+                print(f"{plugin}: update failed: {result['message']}")
+            else:  # pragma: no cover
+                print(f"{plugin}: unknown update status {status!r}.")
 
     errors = [r for r in results if r["status"] == "error"]
     return 1 if errors else 0

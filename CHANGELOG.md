@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **multi-plugin packages**: packages containing several plugin directories
+  under `plugins/` (e.g. SimpleAdmin's main plugin + FunCommands +
+  StealthModule) can now be split into separate repository entries via
+  `--plugins SimpleAdmin,FunCommands,StealthModule` on `add`/`registry add`,
+  or the `plugins` field in `cs2pkg.json` (`add --pkg` splits
+  automatically). `install --from-registry` adds every plugin in the package
+  and installs the requested one; `update` refreshes each plugin from the
+  same registry entry.
 - **web readiness**: `GET /api/health` returns a JSON health check and
   startup prints `CS2LM_READY port=...`, so wrapper scripts can detect that
   the server is listening (not merely that a process is alive).

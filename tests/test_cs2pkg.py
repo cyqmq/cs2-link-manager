@@ -142,3 +142,36 @@ def test_add_from_pkg_propagates_metadata(repo_server, tmp_path):
     assert manifest["author"] == "Bob"
     assert manifest["description"] == "pkg desc"
     assert manifest["license"] == "MIT"
+
+
+def test_add_pkg_multi_plugin_splits(repo_server, tmp_path):
+    """A .cs2pkg declaring ``plugins`` splits into separate repo entries."""
+    import json
+
+    from conftest import make_multi_css_package
+
+    repo, _server = repo_server
+    pkg = make_multi_css_package(
+        tmp_path, ["SimpleAdmin", "FunCommands", "StealthModule"]
+    )
+    (pkg / "cs2pkg.json").write_text(
+        json.dumps(
+            {
+                "name": "SimpleAdmin",
+                "version": "1.0.0",
+                "plugin_type": "css",
+                "plugins": ["SimpleAdmin", "FunCommands", "StealthModule"],
+                "ini_lines": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    pkg_path = tmp_path / "SimpleAdmin.cs2pkg"
+    with zipfile.ZipFile(pkg_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for f in sorted(pkg.rglob("*")):
+            if f.is_file():
+                zf.write(f, f.relative_to(pkg).as_posix())
+
+    rc = cli.main(["--repo", str(repo), "add", "--pkg", str(pkg_path)])
+    assert rc == 0
+    assert list_plugins(repo) == ["FunCommands", "SimpleAdmin", "StealthModule"]

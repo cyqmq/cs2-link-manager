@@ -52,6 +52,7 @@ def registry_add(
     addons_subdir: str | None = None,
     sha256: str | None = None,
     requires: list[str] | None = None,
+    plugins: list[str] | None = None,
 ) -> dict:
     """Add or update a registry entry. Returns the stored entry."""
     if not name.strip():
@@ -65,6 +66,7 @@ def registry_add(
         "addons_subdir": addons_subdir,
         "sha256": sha256,
         "requires": [r.strip() for r in requires if r and r.strip()] if requires else [],
+        "plugins": [p.strip() for p in plugins if p and p.strip()] if plugins else [],
     }
     data = load_registry(repo)
     data[name.strip()] = entry

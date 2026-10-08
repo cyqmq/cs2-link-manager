@@ -185,3 +185,28 @@ def test_cli_add_url_with_addons_subdir(repo_server, tmp_path):
     assert "UrlPlugin" in list_plugins(repo)
     manifest = load_manifest(repo, "UrlPlugin")
     assert any("plugins/UrlPlugin" in f["source"] for f in manifest["files"])
+
+
+def test_cli_add_url_multi_plugin_split(repo_server, tmp_path):
+    """add --url ... --plugins A,B splits into separate repo entries."""
+    from conftest import make_multi_css_package
+
+    repo, _server = repo_server
+    pkg = make_multi_css_package(
+        tmp_path, ["SimpleAdmin", "FunCommands", "StealthModule"]
+    )
+    zip_path = make_zip(tmp_path, pkg, zip_name="multi.zip")
+    with serve_dir(zip_path.parent) as base_url:
+        rc = cli.main(
+            [
+                "--repo",
+                str(repo),
+                "add",
+                "--url",
+                f"{base_url}/{zip_path.name}",
+                "--plugins",
+                "SimpleAdmin,FunCommands,StealthModule",
+            ]
+        )
+    assert rc == 0
+    assert list_plugins(repo) == ["FunCommands", "SimpleAdmin", "StealthModule"]

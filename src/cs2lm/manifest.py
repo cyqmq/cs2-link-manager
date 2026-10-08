@@ -176,9 +176,9 @@ def _normalize_css_plugin_dirs(files_root: Path, name: str) -> None:
         names = ", ".join(p.name for p in plugin_dirs)
         raise ValueError(
             f"Package contains {len(plugin_dirs)} plugin directories under "
-            f"'plugins/': {names}. cs2-link-manager manages one plugin per "
-            "repository entry — extract and add each plugin separately, or "
-            "use 'cs2lm adopt' for plugins already on the server."
+            f"'plugins/': {names}. Use '--plugins {','.join(p.name for p in plugin_dirs)}' "
+            f"to split it into separate repository entries, or extract and add "
+            "each plugin separately."
         )
     old_name = plugin_dirs[0].name
     if old_name == name or not old_name:
@@ -348,6 +348,87 @@ def _validate_no_core_overwrites(files: list[dict]) -> None:
                     f"Plugin package contains core framework file '{src}'; "
                     "refusing to manage core files."
                 )
+
+
+def split_css_plugins(
+    source: str | Path,
+    names: list[str],
+    dest_base: str | Path,
+) -> list[tuple[str, Path]]:
+    """Split a multi-plugin CSS package into per-plugin ``addons/`` trees.
+
+    Given an extracted package root whose
+    ``addons/counterstrikesharp/plugins/`` contains several plugin
+    directories, build one ``addons/`` tree per plugin under ``dest_base``,
+    mirroring exactly what :func:`_collect_css_links` would link for a single
+    plugin: ``plugins/<name>``, ``configs/plugins/<name>``,
+    ``configs/<name>.*``, ``lang/<name>``, ``gamedata/<name>`` and
+    ``gamedata/plugins/<name>`` (when present).
+
+    Returns ``(name, source_dir)`` pairs that can be passed to
+    :func:`add_plugin`.
+    """
+    src = Path(source)
+    base = Path(dest_base)
+    css = src / "addons" / "counterstrikesharp"
+    if not css.is_dir():
+        raise ValueError(
+            "Package does not contain a CounterStrikeSharp addons/ tree; "
+            "cannot split into plugins."
+        )
+    plugins_dir = css / "plugins"
+    if not plugins_dir.is_dir():
+        raise ValueError("Package has no plugins/ directory to split.")
+    available = sorted(p.name for p in plugins_dir.iterdir() if p.is_dir())
+    missing = [n for n in names if n not in available]
+    if missing:
+        raise ValueError(
+            f"Plugin(s) not found in package: {', '.join(missing)}. "
+            f"Available: {', '.join(available)}."
+        )
+
+    results: list[tuple[str, Path]] = []
+    for name in names:
+        out = base / name
+        dest_css = out / "addons" / "counterstrikesharp"
+        shutil.copytree(plugins_dir / name, dest_css / "plugins" / name)
+
+        cplugins = css / "configs" / "plugins"
+        if (cplugins / name).is_dir():
+            shutil.copytree(
+                cplugins / name, dest_css / "configs" / "plugins" / name
+            )
+
+        cfg_root = css / "configs"
+        for child in sorted(cfg_root.iterdir()):
+            if child.name == "plugins":
+                continue
+            if child.name == name or child.name.startswith(name + "."):
+                (dest_css / "configs").mkdir(parents=True, exist_ok=True)
+                if child.is_dir():
+                    shutil.copytree(child, dest_css / "configs" / child.name)
+                else:
+                    shutil.copy2(child, dest_css / "configs" / child.name)
+
+        lang = css / "lang"
+        if (lang / name).is_dir():
+            shutil.copytree(lang / name, dest_css / "lang" / name)
+
+        gamedata = css / "gamedata"
+        if (gamedata / name).exists():
+            (dest_css / "gamedata").mkdir(parents=True, exist_ok=True)
+            if (gamedata / name).is_dir():
+                shutil.copytree(gamedata / name, dest_css / "gamedata" / name)
+            else:
+                shutil.copy2(gamedata / name, dest_css / "gamedata" / name)
+        if (gamedata / "plugins" / name).is_dir():
+            shutil.copytree(
+                gamedata / "plugins" / name,
+                dest_css / "gamedata" / "plugins" / name,
+            )
+
+        results.append((name, out))
+    return results
 
 
 def add_plugin(
