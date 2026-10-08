@@ -89,6 +89,9 @@ SimpleAdmin + FunCommands + StealthModule 三个插件目录），在 `plugins` 
 * 包里的 `shared/` 目录**不会**被复制进拆分结果（多个拆分插件若都安装
   `shared/` 下的同一路径，会产生链接冲突）。遇到含 `shared/` 的包时工具会
   打印警告，需要 `shared/` 的服主请手动放置；
+* **单插件包不受影响**：`add` 会整棵复制 `addons/`（含 `shared/`），并把
+  `shared/<Lib>` 自动链接到服务器（如 cs2-retakes 的
+  `shared/RetakesPluginShared`）；
 * 拆分出的每个插件独立安装 / 卸载 / 更新。
 
 只有单个插件时无需声明 `plugins`。

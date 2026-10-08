@@ -388,6 +388,11 @@ cs2lm add --pkg ./SimpleAdmin.cs2pkg
 `lang/<Name>`、`gamedata/<Name>` 等目录，每个插件独立安装/卸载/更新。
 若包里含 `shared/` 目录，工具会打印警告并**不**把它复制进拆分结果
 （多个拆分插件安装同一 `shared/` 路径会产生链接冲突）。
+
+**单插件包自带 `shared/` 则完全支持**：`add` 会整棵复制 `addons/`（含
+`shared/`），并自动把 `shared/<Lib>` 链接到服务器的
+`addons/counterstrikesharp/shared/<Lib>`。cs2-retakes 这类依赖
+`shared/RetakesPluginShared` 的插件可以直接托管。
 注册表条目也可以用 `--plugins` 声明多插件包：
 
 ```bash

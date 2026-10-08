@@ -346,3 +346,49 @@ def test_pack_preserves_detected_version(repo_server, tmp_path):
 
     pkg_path = build_pkg(repo, "Retakes", tmp_path / "dist")
     assert load_pkg_meta(pkg_path)["version"] == "3.1.1"
+
+
+def test_retakes_scenario_dir_rename_and_shared(repo_server, tmp_path):
+    """cs2-retakes-style package: dir renamed to repo name, shared linked.
+
+    Regression coverage for a real deployment report: a package shipping
+    ``plugins/cs2-retakes/RetakesPlugin.dll`` plus
+    ``shared/RetakesPluginShared/`` was registered as ``RetakesPlugin``.
+    The tool must (1) normalize the plugin directory to the repo name and
+    (2) link the ``shared/`` library to the server.
+    """
+    from cs2lm import linking
+    from cs2lm.installer import PluginManager
+
+    repo, server = repo_server
+    pkg = tmp_path / "retakes-pkg"
+    plugin_dir = pkg / "addons" / "counterstrikesharp" / "plugins" / "cs2-retakes"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "RetakesPlugin.dll").write_bytes(b"MZ")
+    (plugin_dir / "RetakesPlugin.deps.json").write_text("{}", encoding="utf-8")
+    shared_dir = pkg / "addons" / "counterstrikesharp" / "shared" / "RetakesPluginShared"
+    shared_dir.mkdir(parents=True)
+    (shared_dir / "RetakesPluginShared.dll").write_bytes(b"MZ")
+
+    manifest = add_plugin(repo, "RetakesPlugin", pkg)
+    # The plugin directory is normalized to the repository name.
+    assert any(
+        "plugins/RetakesPlugin/RetakesPlugin.dll" in f["source"]
+        for f in manifest["files"]
+    )
+    assert not any("plugins/cs2-retakes" in f["source"] for f in manifest["files"])
+    # The shared library is recorded as a link.
+    assert any(
+        "shared/RetakesPluginShared" in link["source"]
+        for link in manifest["links"]
+    )
+
+    PluginManager(repo).install("RetakesPlugin")
+    target_plugin = (
+        server / "game" / "csgo" / "addons" / "counterstrikesharp" / "plugins" / "RetakesPlugin"
+    )
+    target_shared = (
+        server / "game" / "csgo" / "addons" / "counterstrikesharp" / "shared" / "RetakesPluginShared"
+    )
+    assert linking.path_exists(target_plugin)
+    assert linking.path_exists(target_shared)
