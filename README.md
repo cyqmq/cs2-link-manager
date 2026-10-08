@@ -80,14 +80,14 @@ cs2lm profile use competitive
 | `init --server <dir>` | 创建仓库骨架和 `config.json`。 |
 | `add <name> <path>` / `add <name> --url <zip-url> [--addons-subdir <dir>]` / `add [<name>] --pkg <file.cs2pkg>` | 把插件包（本地目录、下载的 zip 或 `.cs2pkg`）复制进仓库，生成 `manifest.json`；`--pkg` 省略名字时用 `cs2pkg.json` 的 `name`；`--addons-subdir` 指定 zip 内 `addons/` 树所在的子目录（如 `public`）。 |
 | `pack <name> [--out <dir>]` | 把仓库插件打包成 `.cs2pkg` 文件。 |
-| `install <name> [--from-registry]` | 按 manifest 创建链接（幂等）；`--from-registry` 先从本地注册表添加插件再安装。 |
+| `install <name|#N> [--from-registry] [--timeout <s>]` | 按 manifest 创建链接（幂等）；如果插件不在仓库里，自动回退到已配置的 `index.json` 源（或本地注册表）下载安装，并递归补装 `requires` 依赖；`#N` 直接引用 `search` 结果快照里的序号。 |
 | `uninstall <name>` | 删除工具创建的链接，保留仓库文件。 |
 | `enable <name>` / `disable <name>` | 创建/删除链接（同 install/uninstall）。 |
 | `list` | 显示名称、类型、版本、启用/安装状态。 |
 | `registry add <name> <url> [--description] [--type] [--addons-subdir] [--sha256 <hex>] [--requires <names>]` | 往本地注册表添加一个插件源（URL）；`--sha256` 记录 zip 校验和，`--requires` 记录依赖插件（逗号分隔）。 |
 | `registry list` / `registry remove <name>` | 列出 / 删除注册表条目。 |
-| `search <query>` | 在本地注册表里搜索插件（名称/描述/URL）。 |
-| `update [name...] [--yes] [--remove-orphans] [--timeout <s>]` | 拉取配置的多个 `index.json` 源，合并出每个插件的最新版本，对比本地后自动安装缺失的、更新低版本的；`--remove-orphans` 把不在任何源里的插件移到仓库 trash；`--yes` 跳过确认。 |
+| `search [<query>] [--source <url>] [--timeout <s>]` | 合并所有已配置 `index.json` 源 + 本地注册表，输出带序号的目录（名称/版本/状态/来源/描述），并把结果快照写入 `state/search_result.json` 供 `install #N` 引用。 |
+| `update [name...] [--yes] [--remove-orphans] [--timeout <s>] [--self]` | 拉取配置的多个 `index.json` 源，只更新**本地已安装**的插件；缺失插件只列出并提示用 `install` 安装，绝不自动装；`--remove-orphans` 把不在任何源里的插件移到仓库 trash；`--self` 尝试更新工具自身（git 检出时执行 `git pull`）。 |
 | `source add <index-url> [--name <n>] [--header "K: V"]...` | 添加一个 `index.json` 插件源（可带鉴权 header）。 |
 | `source list` / `source remove <index-url>` / `source clear` | 列出 / 删除 / 清空插件源。 |
 | `profile create <name> [plugins...]` | 创建命名 profile。 |
@@ -399,25 +399,53 @@ cs2lm add --pkg ./SimpleAdmin.cs2pkg
 cs2lm registry add SimpleAdmin https://.../SimpleAdmin.zip \
   --plugins SimpleAdmin,FunCommands,StealthModule
 cs2lm install SimpleAdmin --from-registry   # 添加全部 3 个，安装 SimpleAdmin
-cs2lm update SimpleAdmin                    # 同时更新 3 个插件
 ```
 
 **文件校验和**：每个纳入管理的文件都会在 manifest 里记录 `sha256`，为后续
 的完整性校验/更新比对打基础。
 
-## 本地注册表（registry）与搜索
+## 浏览目录与按需安装（search / install）
 
-内置一个轻量本地注册表 `registry.json`，用于"一行命令装插件"：
+`cs2lm search` 把**所有已配置的 `index.json` 源 + 本地注册表**合并成一个
+带序号的统一目录，并标注每个插件在你仓库里的状态：
+
+```text
+#  [#]  名称            版本    状态          来源      描述
+#  [1]  cs2-retakes     3.1.1   未安装        index-a   retakes插件
+#  [2]  MatchZy         1.0.0   已装(1.0.0)   index-b   比赛管理
+#  [3]  SimpleAdmin     1.9.0   未安装        registry  ...
+```
+
+```bash
+# 浏览全部 / 按关键词过滤 / 只看某个源
+cs2lm search
+cs2lm search retakes
+cs2lm search --source https://example.com/index.json
+
+# 结果快照写入 state/search_result.json，install 支持 #N 直接引用
+cs2lm install #1
+
+# 或直接按名字装（不在仓库里会自动回退到源）
+cs2lm install MatchZy
+```
+
+`install` 的解析顺序：
+
+1. `#N` → 读 `state/search_result.json` 快照，按序号定位插件；
+2. 插件已在仓库 → 走本地 manifest 安装；
+3. 插件不在仓库 → 在合并的 `index.json` 源里找：找到就下载、校验、添加并
+   安装，`requires` 依赖会**递归自动补装**；
+4. 源里没有 → 回退到本地注册表（`--from-registry` 强制只走这一步）；
+5. 都没有 → 报错并提示先 `cs2lm search`。
+
+本地注册表 `registry.json` 仍然可用（适合不发布 index 的零散 zip）：
 
 ```bash
 # 添加一个插件源（URL 可以是 zip / .cs2pkg / GitHub release）
 cs2lm registry add MatchZy https://example.com/MatchZy.zip \
   --description "Match management plugin" --type css
 
-# 搜索
-cs2lm search matchzy
-
-# 一键添加 + 安装
+# 一键添加 + 安装（等价于 install 流程的第 4 步回退）
 cs2lm install MatchZy --from-registry
 ```
 
@@ -444,10 +472,10 @@ cs2lm source add https://example.com/private/index.json \
 cs2lm source list
 cs2lm source remove https://example.com/index.json
 
-# 更新所有插件
+# 只更新本地已安装的插件
 cs2lm update
 
-# 只更新指定插件
+# 只更新指定插件（必须已安装）
 cs2lm update MatchZy
 
 # 脚本场景跳过确认 / 干跑
@@ -465,9 +493,10 @@ cs2lm update --remove-orphans
 2. 按**多源合并规则**得到「每个插件的最高版本 + 下载地址」：每个插件独立
    取最高版本，版本相同时越靠前的源越优先；非 SemVer、缺 `sha256`、
    `yanked: true`、或 `api_version` 不在支持范围内的条目会被跳过并警告；
-3. 扫描本地 manifest，对比版本：本地没有 → **安装**；本地版本低 → **更新**；
-   本地相同或更高 → **跳过**；
-4. 安装 / 更新时下载 zip → 校验 `sha256`（索引必填，缺失则跳过）→ 解压 →
+3. 扫描本地 manifest，对比版本：本地版本低 → **更新**；本地相同或更高 →
+   **跳过**；本地缺失 → **只列出**并提示 `cs2lm install <name>`，**绝不
+   自动安装**（插件获取统一走 `search` → `install`）；
+4. 更新时下载 zip → 校验 `sha256`（索引必填，缺失则跳过）→ 解压 →
    校验包内 `manifest.json` 的 `id` / `version` 与索引一致 → **原子替换**
    插件目录（`.<name>.new` → 旧目录改 `.<name>.old` → 新目录就位 → 删 `.old`）；
 5. 已安装的插件更新后自动重装链接；每次操作写入 `state/update_log.json`。
@@ -494,7 +523,8 @@ cs2lm update --remove-orphans
 行为：
 
 * `cs2lm install MainPlugin` 会**先自动安装** `SharedLib`（递归解析依赖）；
-* 依赖不在仓库里 → 报错并提示先添加；
+* 依赖不在仓库里但出现在同一 `index.json` 源 → `install` 会从源里**自动补装**；
+* 依赖不在任何源里 → 报错并提示先 `search` / `registry add` 添加；
 * 依赖循环（A→B→A）→ 报错拒绝；
 * `cs2lm uninstall SharedLib` 时，如果 `MainPlugin` 已启用且依赖它，会**拒绝
   卸载**并提示先禁用依赖方；

@@ -1,14 +1,19 @@
 """Index-based plugin update mechanism.
 
-``cs2lm update`` follows this flow (see ``docs/INDEX.md`` for the index
-schema):
+``cs2lm update`` keeps locally installed plugins current (see
+``docs/INDEX.md`` for the index schema):
 
 1. fetch every configured source's ``index.json`` (ETag-cached),
 2. merge them into one "latest available plugin table",
 3. scan local plugin manifests to learn each plugin's current version,
-4. compare: missing -> install, remote newer -> update, else skip,
+4. compare: remote newer -> update, same/higher -> skip,
 5. plugins absent from every source are orphans (kept or removed),
-6. execute install/update with staged, atomic directory replacement.
+6. execute updates with staged, atomic directory replacement.
+
+Missing plugins are **reported, not installed**: ``cs2lm update`` only lists
+them and points the user to ``cs2lm install <name>``, which pulls a plugin
+straight from the merged index (dependencies included). See
+``cs2lm.catalog`` for the browse-and-install flow.
 
 A plugin directory is replaced atomically: the new package is built in a
 temporary repository, copied to ``.<name>.new``, then the current directory
@@ -24,6 +29,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from cs2lm.config import load_config
+from cs2lm.installer import PluginManager
 from cs2lm.logutil import Logger
 from cs2lm.manifest import (
     add_plugin,
@@ -303,7 +309,7 @@ def update_plugin(
             "status": "not-in-repo",
             "message": (
                 "plugin is not in the repository; use "
-                "'cs2lm update' so it gets installed from the index first"
+                "'cs2lm install <name>' to install it from the index first"
             ),
         }
 

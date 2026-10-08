@@ -322,8 +322,8 @@ def test_update_plugin_sha256_mismatch(repo_server, tmp_path):
     assert "Checksum mismatch" in result["message"]
 
 
-def test_cli_update_installs_missing_and_skips_newer(repo_server, tmp_path):
-    """update installs missing plugins and skips ones already newer."""
+def test_cli_update_reports_missing_and_skips_newer(repo_server, tmp_path):
+    """update does not auto-install missing plugins; install does."""
     import json
 
     repo, _server = repo_server
@@ -358,10 +358,15 @@ def test_cli_update_installs_missing_and_skips_newer(repo_server, tmp_path):
         encoding="utf-8",
     )
     assert cli.main(["--repo", str(repo), "source", "add", index_path.as_uri()]) == 0
+    # update only reports the missing plugin, it must not install it.
     assert cli.main(["--repo", str(repo), "update", "--yes"]) == 0
-    assert "New" in list_plugins(repo)
+    assert "New" not in list_plugins(repo)
     old_manifest = load_manifest(repo, "Old")
     assert old_manifest["version"] == "1.0.0"
+
+    # install falls back to the source and adds the missing plugin.
+    assert cli.main(["--repo", str(repo), "install", "New"]) == 0
+    assert "New" in list_plugins(repo)
 
 
 def test_cli_update_orphan_removal(repo_server, tmp_path):
@@ -400,7 +405,7 @@ def test_cli_update_orphan_removal(repo_server, tmp_path):
     assert any((repo / "trash" / "plugins").glob("Orphan-*"))
 
 
-def test_cli_update_requires_expansion(repo_server, tmp_path):
+def test_cli_install_from_source_installs_requires(repo_server, tmp_path):
     """Dependencies listed in index ``requires`` are installed first."""
     import json
 
@@ -437,7 +442,13 @@ def test_cli_update_requires_expansion(repo_server, tmp_path):
         encoding="utf-8",
     )
     assert cli.main(["--repo", str(repo), "source", "add", index_path.as_uri()]) == 0
+    # update only reports the missing plugins.
     assert cli.main(["--repo", str(repo), "update", "--yes"]) == 0
+    assert "DepLib" not in list_plugins(repo)
+    assert "Main" not in list_plugins(repo)
+
+    # install falls back to the source and pulls in the dependency first.
+    assert cli.main(["--repo", str(repo), "install", "Main"]) == 0
     assert "DepLib" in list_plugins(repo)
     assert "Main" in list_plugins(repo)
     main_manifest = load_manifest(repo, "Main")

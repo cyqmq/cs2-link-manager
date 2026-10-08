@@ -14,12 +14,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `cs2lm update` now fetches every source (ETag/If-Modified-Since cached,
   per-source failure isolated, offline fallback to the last merged table),
   merges them (highest version per plugin; earlier source wins ties), scans
-  local manifests, and installs/updates/skips accordingly. Missing plugins
-  are installed, lower versions are updated via atomic directory replacement
-  (`.<name>.new` -> `.<name>.old` -> swap -> remove `.old`), orphans can be
-  removed with `--remove-orphans`, and every action is appended to
-  `state/update_log.json`. Requires supports version ranges
-  (`{"DepLib": ">=1.0.0"}`) and dependencies are installed first.
+  local manifests, and updates/skips accordingly. Lower versions are updated
+  via atomic directory replacement (`.<name>.new` -> `.<name>.old` -> swap ->
+  remove `.old`), orphans can be removed with `--remove-orphans`, and every
+  action is appended to `state/update_log.json`. Requires supports version
+  ranges (`{"DepLib": ">=1.0.0"}`) and dependencies are installed first.
+- **unified catalog search**: `cs2lm search [<query>] [--source <url>]`
+  merges every configured `index.json` source plus the local registry into a
+  numbered catalog (name / version / install status / source / description),
+  writes the snapshot to `state/search_result.json`, and `cs2lm install #N`
+  installs directly from that snapshot.
+- **install from sources**: `cs2lm install <name|#N>` falls back to the
+  merged index when a plugin is missing locally, downloads/verifies/installs
+  it, and recursively installs `requires` dependencies from the same sources
+  (still falling back to the local registry as a last resort).
+- **pure update**: `cs2lm update` only updates locally installed plugins.
+  Missing plugins are listed with a `cs2lm install <name>` hint instead of
+  being auto-installed. `--self` attempts to update the tool itself (git
+  pull in a checkout).
 - **stricter index validation**: merge skips (with warnings) entries that
   are non-SemVer, missing/invalid `sha256`, `yanked: true`, or whose
   `api_version` falls outside the configured `update.api_version_range`;
@@ -97,6 +109,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of `registry.json` entries. `registry add` remains available for
   `install --from-registry`; for version-based updates use
   `cs2lm source add <index-url>`.
+- **update no longer installs missing plugins**: previously `update`
+  installed every plugin absent locally; now it only reports them and
+  instructs the user to run `cs2lm install <name>`. Plugin acquisition is a
+  `search` -> `install` flow.
 - **requires**: dependency declarations may be an object
   (`{"DepLib": ">=1.0.0"}`) as well as a plain list of plugin names; the
   installer accepts both.
