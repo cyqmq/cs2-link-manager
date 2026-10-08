@@ -358,7 +358,7 @@ def test_cli_update_reports_missing_and_skips_newer(repo_server, tmp_path):
         encoding="utf-8",
     )
     assert cli.main(["--repo", str(repo), "source", "add", index_path.as_uri()]) == 0
-    # update only reports the missing plugin, it must not install it.
+    # update does not install missing plugins and does not print a huge list.
     assert cli.main(["--repo", str(repo), "update", "--yes"]) == 0
     assert "New" not in list_plugins(repo)
     old_manifest = load_manifest(repo, "Old")

@@ -4,7 +4,8 @@
 ![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)
 [![CI](https://github.com/cyqmq/cs2-link-manager/actions/workflows/ci.yml/badge.svg)](https://github.com/cyqmq/cs2-link-manager/actions/workflows/ci.yml)
 
-跨平台 CLI 工具，用于管理 CS2 的 **CounterStrikeSharp** 与 **Metamod** 插件：
+跨平台 CLI 工具，用于管理 CS2 的多框架插件：**Metamod:Source**、
+**CounterStrikeSharp (CS#)**、**SwiftlyS2**、**Plugify** 与 **ModSharp**。
 把插件文件保存在中央 **repository**（仓库）中，再用 **符号链接**（Windows
 上使用 junction，失败时回退到复制）映射到服务器目录。
 
@@ -30,8 +31,10 @@
 
 * Python **3.11+**（仅标准库）。
 * Linux（首选）或 Windows（支持 junction / 复制回退）。
-* 已安装 Metamod:Source 与 CounterStrikeSharp 的 CS2 专用服务器（本工具
-  **不安装**核心框架）。
+* 已安装目标插件对应框架（Metamod:Source、CounterStrikeSharp、SwiftlyS2、
+  Plugify 或 ModSharp）的 CS2 专用服务器（本工具**不安装**核心框架）。
+  安装插件时工具会检测服务器是否已装对应框架，缺失则拒绝（`--force`
+  可绕过）。
 
 ## 安装
 
@@ -78,16 +81,16 @@ cs2lm profile use competitive
 | 命令 | 说明 |
 | --- | --- |
 | `init --server <dir>` | 创建仓库骨架和 `config.json`。 |
-| `add <name> <path>` / `add <name> --url <zip-url> [--addons-subdir <dir>]` / `add [<name>] --pkg <file.cs2pkg>` | 把插件包（本地目录、下载的 zip 或 `.cs2pkg`）复制进仓库，生成 `manifest.json`；`--pkg` 省略名字时用 `cs2pkg.json` 的 `name`；`--addons-subdir` 指定 zip 内 `addons/` 树所在的子目录（如 `public`）。 |
+| `add <name> <path>` / `add <name> --url <zip-url> [--addons-subdir <dir>]` / `add [<name>] --pkg <file.cs2pkg>` | 把插件包（本地目录、下载的 zip 或 `.cs2pkg`）复制进仓库，生成 `manifest.json`；`--pkg` 省略名字时用 `cs2pkg.json` 的 `name`；`--addons-subdir` 指定 zip 内 `addons/` 树所在的子目录（如 `public`）；`--type css|metamod|swiftly|plugify|modsharp` 可跳过自动识别。 |
 | `pack <name> [--out <dir>]` | 把仓库插件打包成 `.cs2pkg` 文件。 |
-| `install <name|#N> [--from-registry] [--timeout <s>]` | 按 manifest 创建链接（幂等）；如果插件不在仓库里，自动回退到已配置的 `index.json` 源（或本地注册表）下载安装，并递归补装 `requires` 依赖；`#N` 直接引用 `search` 结果快照里的序号。 |
+| `install <name|#N> [--from-registry] [--timeout <s>] [--force]` | 按 manifest 创建链接（幂等）；如果插件不在仓库里，自动回退到已配置的 `index.json` 源（或本地注册表）下载安装，并递归补装 `requires` 依赖；`#N` 直接引用 `search` 结果快照里的序号。安装前检测插件所属框架是否已装在服务器上，缺失则拒绝（`--force` 绕过）。 |
 | `uninstall <name>` | 删除工具创建的链接，保留仓库文件。 |
 | `enable <name>` / `disable <name>` | 创建/删除链接（同 install/uninstall）。 |
 | `list` | 显示名称、类型、版本、启用/安装状态。 |
 | `registry add <name> <url> [--description] [--type] [--addons-subdir] [--sha256 <hex>] [--requires <names>]` | 往本地注册表添加一个插件源（URL）；`--sha256` 记录 zip 校验和，`--requires` 记录依赖插件（逗号分隔）。 |
 | `registry list` / `registry remove <name>` | 列出 / 删除注册表条目。 |
 | `search [<query>] [--source <url>] [--timeout <s>]` | 合并所有已配置 `index.json` 源 + 本地注册表，输出带序号的目录（名称/版本/状态/来源/描述），并把结果快照写入 `state/search_result.json` 供 `install #N` 引用。 |
-| `update [name...] [--yes] [--remove-orphans] [--timeout <s>] [--self]` | 拉取配置的多个 `index.json` 源，只更新**本地已安装**的插件；缺失插件只列出并提示用 `install` 安装，绝不自动装；`--remove-orphans` 把不在任何源里的插件移到仓库 trash；`--self` 尝试更新工具自身（git 检出时执行 `git pull`）。 |
+| `update [name...] [--yes] [--remove-orphans] [--timeout <s>] [--self]` | 拉取配置的多个 `index.json` 源，只更新**本地已安装**的插件；缺失插件**不列出、绝不自动装**（避免大源刷屏）；`--remove-orphans` 把不在任何源里的插件移到仓库 trash；`--self` 尝试更新工具自身（git 检出时执行 `git pull`）。 |
 | `source add <index-url> [--name <n>] [--header "K: V"]...` | 添加一个 `index.json` 插件源（可带鉴权 header）。 |
 | `source list` / `source remove <index-url>` / `source clear` | 列出 / 删除 / 清空插件源。 |
 | `profile create <name> [plugins...]` | 创建命名 profile。 |
@@ -96,7 +99,7 @@ cs2lm profile use competitive
 | `doctor` | 检查服务器结构、断链、缺失目标、权限、冲突、CSS API 版本依赖。 |
 | `import <name> <path-in-server>` | 把服务器上指定路径的单个插件反向导入仓库。 |
 | `adopt [--plugin <name>]` | 扫描服务器上已有的 CSS 插件，批量导入仓库。 |
-| `web [--host H] [--port P] [--auth-token T]` | 启动本地 Web UI，浏览并切换插件；设置令牌后需要认证。 |
+| `web [--host H] [--port P] [--auth-token T]` | 启动本地 Web 管理界面：状态卡显示服务器框架，支持目录搜索、一键安装/卸载、更新全部、插件启停；并暴露 JSON API（见「Web UI」）。设置令牌后需要认证。 |
 
 全局选项：`--repo <path>`（默认 `plugins-repo` 或 `$CS2LM_REPO`）、
 `--dry-run`、`--log <file>`、`--log-format text|json`、`--verbose`、
@@ -224,6 +227,9 @@ Switched to profile 'competitive':
 | `addons/counterstrikesharp/gamedata/plugins/<Name>/` | **symlink**（Windows 用 junction） | 插件专属 gamedata 子目录 |
 | `addons/counterstrikesharp/gamedata/gamedata.json` | **不管理** | 框架共享文件；需手动合并 |
 | `addons/counterstrikesharp/api`、`bin`、`dotnet`、`shared` | **不管理** | CSS 核心框架 |
+| `addons/swiftly/plugins/<Name>/`、`configs/plugins/<Name>/` | **symlink**（Windows 用 junction） | SwiftlyS2 插件目录与配置 |
+| `addons/plugify/plugins/<Name>/`、`configs/plugins/<Name>/` | **symlink**（Windows 用 junction） | Plugify 插件目录与配置 |
+| `addons/modsharp/plugins/<Name>/`、`configs/plugins/<Name>/` | **symlink**（Windows 用 junction） | ModSharp 插件目录与配置 |
 | `addons/metamod/bin/` | **不管理** | Metamod 原生二进制（`.so`/`.dll`） |
 | `addons/metamod/*.vdf`（第三方插件） | **copy + backup + rollback** | 加载器文件对符号链接敏感 |
 | `addons/metamod/metaplugins.ini` | **行编辑 + backup + rollback** | 就地编辑的小文本文件 |
@@ -237,6 +243,28 @@ Switched to profile 'competitive':
 这是有意为之：核心文件包含原生二进制和加载器 `.vdf`，对符号链接很敏感——
 加载链依赖引擎如何解析 `gameinfo.gi` 的搜索路径，Metamod 曾因引擎更新而
 失效（参见 [metamod-source issue #232](https://github.com/alliedmodders/metamod-source/issues/232)）。
+
+## 多框架支持与框架检测
+
+支持以下插件框架（`plugin_type` 可写规范 id 或别名）：
+
+| 框架 | `plugin_type` | 别名 | 服务器目录（相对 `game/csgo/`） |
+| --- | --- | --- | --- |
+| Metamod:Source | `metamod` | `metamod-source`, `mm` | `addons/metamod` |
+| CounterStrikeSharp (CS#) | `css` | `counterstrikesharp`, `cs#` | `addons/counterstrikesharp` |
+| SwiftlyS2 | `swiftly` | `swiftly-s2` | `addons/swiftly` |
+| Plugify | `plugify` | `plugify-s2` | `addons/plugify` |
+| ModSharp | `modsharp` | `mod-sharp` | `addons/modsharp` |
+
+* `add` / `import` / `registry add` 的 `--type` 接受上表任意值；不传时自动
+  按包内 `addons/` 树的根目录识别框架。
+* 服务器端框架检测：工具扫描 `<server>/<csgo_rel>/addons`，报告每个框架
+  是否就位（CSS 额外要求 `api/CounterStrikeSharp.API.dll` 存在）。
+* **安装防护**：`install` 时如果插件所属框架未装在服务器上，直接拒绝并给出
+  安装框架的路径提示；确认无误可用 `--force` 绕过。
+* `doctor` 与 `web` 会显示服务器当前已装的框架。
+
+框架检测在 `doctor --verbose`、`web /api/status` 与 Web 页面状态卡中可见。
 
 ## Metamod 处理（重要）
 
@@ -494,8 +522,8 @@ cs2lm update --remove-orphans
    取最高版本，版本相同时越靠前的源越优先；非 SemVer、缺 `sha256`、
    `yanked: true`、或 `api_version` 不在支持范围内的条目会被跳过并警告；
 3. 扫描本地 manifest，对比版本：本地版本低 → **更新**；本地相同或更高 →
-   **跳过**；本地缺失 → **只列出**并提示 `cs2lm install <name>`，**绝不
-   自动安装**（插件获取统一走 `search` → `install`）；
+   **跳过**；本地缺失 → **不列出、不自动安装**（插件获取统一走
+   `search` → `install`，避免大索引刷屏）；
 4. 更新时下载 zip → 校验 `sha256`（索引必填，缺失则跳过）→ 解压 →
    校验包内 `manifest.json` 的 `id` / `version` 与索引一致 → **原子替换**
    插件目录（`.<name>.new` → 旧目录改 `.<name>.old` → 新目录就位 → 删 `.old`）；
@@ -582,7 +610,7 @@ cs2lm install SimpleAdmin --backup
 
 ## Web UI
 
-为喜欢用浏览器的服主提供了一个小型可读写 Web 界面：
+为喜欢用浏览器的服主提供了一个小型可读写 **Web 管理界面**：
 
 ```bash
 cs2lm web --port 8080
@@ -590,9 +618,38 @@ cs2lm web --port 8080
 # CS2LM_READY port=8080 auth=none
 ```
 
-页面顶部有**服务器状态卡**（Web 在线、认证状态、CS2 进程是否在运行、仓库
-路径、服务器路径），下面列出插件（名称、类型、版本、启用状态、安装状态）
-并提供启用/禁用按钮。
+页面顶部有**服务器状态卡**（Web 在线、认证状态、CS2 进程是否在运行、
+**已安装的插件框架**、仓库路径、服务器路径）。状态卡下方提供：
+
+* **目录搜索** — 输入关键词搜索所有 `index.json` 源 + 本地注册表，带
+  状态/来源/描述，每个结果有一键 **Install** 按钮；
+* **Update all** — 一键执行 `cs2lm update --yes`；
+* **插件表** — 列出仓库插件（名称、类型、版本、启用状态、安装状态），
+  提供启用/禁用按钮。
+
+**JSON API**（脚本 / 未来前端可直接使用）：
+
+| 端点 | 说明 |
+| --- | --- |
+| `GET /api/health` | 就绪检测（见下） |
+| `GET /api/status` | 服务器状态 + `frameworks`（各框架是否已装） |
+| `GET /api/plugins` | 仓库插件列表 |
+| `GET /api/catalog?query=&source=` | 合并目录搜索 |
+| `POST /api/install` `{"name": "X"}` | 安装插件（支持 `#N`） |
+| `POST /api/uninstall` `{"name": "X"}` | 卸载插件 |
+| `POST /api/update` `{"dry_run": true}` | 更新计划 / 执行更新 |
+
+```bash
+curl -H "X-Auth-Token: my-secret" http://127.0.0.1:8080/api/status
+# {"web": "online", "repo": "...", "server": "...", "cs2": "online",
+#  "frameworks": [{"id": "css", "name": "CounterStrikeSharp (CS#)", "installed": true}, ...]}
+
+curl -H "X-Auth-Token: my-secret" -X POST \
+  -H "Content-Type: application/json" \
+  -d '{"name": "MatchZy"}' \
+  http://127.0.0.1:8080/api/install
+# {"name": "MatchZy", "messages": ["MatchZy: installed 1.0.0."], "status": "ok"}
+```
 
 **就绪检测**：启动时会打印 `CS2LM_READY port=...`，同时提供
 `GET /api/health` 端点返回 JSON `{"status": "ok", ...}`——包装脚本可以据此
@@ -672,11 +729,12 @@ pytest
 * `add` 期望的插件包是 `addons/` 树或插件目录（根目录含 `.dll` +
   `.deps.json`）。远程 **zip** 通过 `--url` 自动处理，`.cs2pkg` 通过
   `--pkg` 处理；其他本地 zip 文件仍需先手动解压。
+* 框架目录布局采用各框架官方约定的 `plugins/<Name>` + `configs/plugins/<Name>`
+  结构；若某框架后续改变目录约定，请以该框架文档为准。
 * CSS API 版本检查是尽力而为：它读取 `.deps.json` 声明和已安装
   `CounterStrikeSharp.API.dll` 的程序集版本。如果 DLL 无法解析，`doctor`
   会提示手动核对。
-* Metamod 插件支持是尽力而为；主要支持的类型是 CounterStrikeSharp。
-  在 Windows 上，Metamod 插件和 CSS 插件都是 `.dll` 文件，`classify_plugin`
+* 在 Windows 上，Metamod 插件和 CSS 插件都是 `.dll` 文件，`classify_plugin`
   无法仅凭扩展名区分——单文件 `.dll` 默认按 CSS 处理，Metamod 插件请提供
   `addons/` 树或 `.vdf` 文件（这两种结构会被正确识别为 Metamod）。
 * `gamedata/gamedata.json` 无法管理（框架共享文件）；此类改动请手动合并。

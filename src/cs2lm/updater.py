@@ -510,3 +510,107 @@ def remove_orphans(
         except Exception as exc:  # noqa: BLE001
             logger.error("update", f"{name}: orphan removal failed: {exc}")
     return removed
+
+
+# ---------------------------------------------------------------------------
+# Programmatic update plan (used by the web API)
+# ---------------------------------------------------------------------------
+
+
+def plan_and_apply_update(
+    repo: str | Path,
+    *,
+    dry_run: bool = True,
+    yes: bool = True,
+    remove_orphans: bool = False,
+    timeout: int | None = None,
+    api_version_range: tuple[int, int] | None = None,
+    logger: Logger | None = None,
+) -> dict:
+    """Fetch sources, build the action plan, and optionally apply updates.
+
+    Returns a JSON-able dict:
+
+    * ``sources`` — per-source status (``url``, ``plugins``, ``error``,
+      ``warnings``);
+    * ``install`` / ``update`` / ``skipped`` / ``orphans`` — action buckets;
+    * ``results`` — per-plugin update outcomes from :func:`update_plugin`;
+    * ``removed_orphans`` — orphan ids actually removed.
+    """
+    from cs2lm.config import load_config
+    from cs2lm.installer import PluginManager
+    from cs2lm.sources import fetch_and_merge, get_sources
+
+    logger = logger or Logger()
+    cfg = load_config(repo)
+    sources = get_sources(cfg)
+    source_reports: list[dict] = []
+    merged: dict = {}
+
+    if sources:
+        merged, results = fetch_and_merge(
+            repo,
+            sources,
+            timeout=timeout or cfg.get("update", {}).get("timeout", 30),
+            api_version_range=api_version_range,
+        )
+        for result in results:
+            if result.get("error"):
+                source_reports.append(
+                    {
+                        "url": result["url"],
+                        "plugins": 0,
+                        "error": result["error"],
+                        "warnings": [],
+                    }
+                )
+            else:
+                index = result.get("index") or {}
+                plugins = index.get("plugins") or {}
+                source_reports.append(
+                    {
+                        "url": result["url"],
+                        "plugins": len(plugins),
+                        "error": None,
+                        "warnings": result.get("warnings") or [],
+                    }
+                )
+
+    local = scan_local(repo)
+    install, update, skipped, orphans = compute_actions(merged, local)
+
+    manager = PluginManager(
+        repo,
+        dry_run=dry_run,
+        yes=yes,
+        logger=logger,
+    )
+    results_map: dict[str, dict] = {}
+    for plugin in update:
+        results_map[plugin] = update_plugin(
+            repo,
+            plugin,
+            merged[plugin],
+            dry_run=dry_run,
+            yes=yes,
+            logger=logger,
+        )
+
+    removed_orphans: list[str] = []
+    if orphans and remove_orphans:
+        if dry_run:
+            removed_orphans = list(orphans)
+        else:
+            removed_orphans = remove_orphans(
+                repo, orphans, manager=manager, logger=logger
+            )
+
+    return {
+        "sources": source_reports,
+        "install": install,
+        "update": update,
+        "skipped": skipped,
+        "orphans": orphans,
+        "results": results_map,
+        "removed_orphans": removed_orphans,
+    }

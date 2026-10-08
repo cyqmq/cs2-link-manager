@@ -55,7 +55,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_add.add_argument("--url", default=None, help="Download a zip package from this URL")
     p_add.add_argument("--pkg", default=None, help="Add a plugin from a local .cs2pkg file")
-    p_add.add_argument("--type", choices=["css", "metamod"], default=None)
+    from cs2lm.frameworks import framework_ids
+
+    framework_choices = framework_ids()
+    p_add.add_argument("--type", choices=framework_choices, default=None)
     p_add.add_argument("--version", default=None)
     p_add.add_argument(
         "--addons-subdir",
@@ -103,7 +106,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_import = sub.add_parser("import", help="Import an installed plugin back into the repo")
     p_import.add_argument("name")
     p_import.add_argument("path", help="Path inside the server directory")
-    p_import.add_argument("--type", choices=["css", "metamod"], default=None)
+    p_import.add_argument("--type", choices=framework_choices, default=None)
     p_import.add_argument("--version", default=None)
 
     p_adopt = sub.add_parser(
@@ -123,7 +126,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_profile_delete = p_profile_sub.add_parser("delete", help="Delete a profile")
     p_profile_delete.add_argument("name")
 
-    p_web = sub.add_parser("web", help="Start a local web UI to browse and toggle plugins")
+    p_web = sub.add_parser("web", help="Start the web management UI (browse/install/update plugins, view frameworks)")
     p_web.add_argument("--host", default="127.0.0.1", help="Bind address (default: 127.0.0.1)")
     p_web.add_argument("--port", type=int, default=8080, help="Port (default: 8080)")
     p_web.add_argument(
@@ -153,7 +156,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_registry_add.add_argument("name")
     p_registry_add.add_argument("url")
     p_registry_add.add_argument("--description", default="")
-    p_registry_add.add_argument("--type", choices=["css", "metamod"], default=None)
+    p_registry_add.add_argument("--type", choices=framework_choices, default=None)
     p_registry_add.add_argument("--addons-subdir", default=None)
     p_registry_add.add_argument("--sha256", default=None, help="Expected SHA-256 of the downloaded zip")
     p_registry_add.add_argument("--requires", default=None, help="Comma-separated plugin names this plugin requires")
@@ -326,129 +329,22 @@ def cmd_add(args: argparse.Namespace, logger: Logger) -> int:
 
 
 def cmd_install(args: argparse.Namespace, logger: Logger) -> int:
-    from cs2lm.catalog import install_from_index_with_deps, load_search_results
-    from cs2lm.config import load_config
-    from cs2lm.manifest import add_plugin, list_plugins, split_css_plugins
-    from cs2lm.registry import load_registry
-    from cs2lm.sources import fetch_and_merge, get_sources
-    from cs2lm.url_add import (
-        DownloadError,
-        download_and_extract,
-        resolve_addons_subdir,
-    )
+    from cs2lm.catalog import install_plugin
 
-    name = args.name
-    registry_entry: dict | None = None
-
-    # A catalog reference like #2 resolves to a plugin name + source entry.
-    if name.startswith("#"):
-        try:
-            ref = int(name[1:])
-        except ValueError:
-            raise ValueError(f"Invalid catalog reference: {name}")
-        row = next(
-            (r for r in load_search_results(args.repo) if r.get("index") == ref),
-            None,
-        )
-        if not row:
-            raise ValueError(
-                f"No catalog result #{ref}. Run 'cs2lm search' first."
-            )
-        name = row["name"]
-        if row.get("source_kind") == "registry":
-            registry_entry = row.get("entry")
-
-    if not args.from_registry and name not in list_plugins(args.repo):
-        # Not installed yet: fall back to the merged index sources.
-        cfg = load_config(args.repo)
-        sources = get_sources(cfg)
-        timeout = args.timeout or cfg.get("update", {}).get("timeout", 30)
-        api_range = cfg.get("update", {}).get("api_version_range")
-        if sources:
-            merged, _results = fetch_and_merge(
-                args.repo,
-                sources,
-                timeout=timeout,
-                api_version_range=api_range,
-            )
-            if name in merged:
-                result = install_from_index_with_deps(
-                    args.repo,
-                    name,
-                    merged,
-                    dry_run=args.dry_run,
-                    logger=logger,
-                )
-                for plugin in result["installed"]:
-                    if args.dry_run:
-                        print(
-                            f"{plugin}: would install {merged[plugin].get('version')}."
-                        )
-                    else:
-                        print(f"{plugin}: installed {merged[plugin].get('version')}.")
-                if result["errors"]:
-                    print(f"Install failed: {', '.join(result['errors'])}")
-                    return 1
-                return 0
-
-    if args.from_registry or (registry_entry is None and name not in list_plugins(args.repo)):
-        # Local registry fallback (also used by --from-registry).
-        if registry_entry is None:
-            registry_entry = load_registry(args.repo).get(name)
-        if not registry_entry:
-            raise ValueError(
-                f"Plugin '{name}' is not in the repository and was not found "
-                "in any configured source or the local registry. Run "
-                "'cs2lm search' to see what is available."
-            )
-        if name not in list_plugins(args.repo):
-            with tempfile.TemporaryDirectory(prefix="cs2lm-reg-") as tmp:
-                tmp = Path(tmp)
-                try:
-                    source = download_and_extract(
-                        registry_entry["url"],
-                        tmp,
-                        expected_sha256=registry_entry.get("sha256"),
-                    )
-                except DownloadError as exc:
-                    raise ValueError(str(exc)) from exc
-                if registry_entry.get("addons_subdir"):
-                    source = resolve_addons_subdir(tmp, registry_entry["addons_subdir"])
-                plugin_names = registry_entry.get("plugins") or []
-                if len(plugin_names) > 1:
-                    added = 0
-                    for pname, split_src in split_css_plugins(
-                        source, plugin_names, Path(tmp)
-                    ):
-                        add_plugin(
-                            args.repo,
-                            pname,
-                            split_src,
-                            type_hint=registry_entry.get("type"),
-                            meta=registry_entry,
-                        )
-                        added += 1
-                    print(f"Added {added} plugins from registry package '{name}'.")
-                else:
-                    add_plugin(
-                        args.repo,
-                        name,
-                        source,
-                        type_hint=registry_entry.get("type"),
-                        meta=registry_entry,
-                    )
-                    print(f"Added '{name}' from registry.")
-
-    manager = PluginManager(
+    result = install_plugin(
         args.repo,
+        args.name,
         dry_run=args.dry_run,
         backup=args.backup,
         force=args.force,
         yes=args.yes,
+        timeout=args.timeout,
+        from_registry=args.from_registry,
         logger=logger,
     )
-    manager.install(name)
-    return 0
+    for message in result["messages"]:
+        print(message)
+    return 0 if result["status"] == "ok" else 1
 
 
 def cmd_uninstall(args: argparse.Namespace, logger: Logger) -> int:
@@ -781,14 +677,8 @@ def cmd_update(args: argparse.Namespace, logger: Logger) -> int:
     local = scan_local(args.repo)
     install, update, skipped, orphans = compute_actions(merged, local)
 
-    # Missing plugins are reported, never auto-installed.
-    if install:
-        print("\nPlugins not installed (use 'cs2lm install <name>' to install):")
-        for plugin in install:
-            print(
-                f"  {plugin} {merged[plugin].get('version')} "
-                f"(from {merged[plugin].get('source')})"
-            )
+    # Missing plugins are not listed here: huge indexes would drown out the
+    # useful output. `cs2lm search` + `cs2lm install` are the browse flow.
 
     if update:
         print("\nUpdates:")
@@ -800,7 +690,7 @@ def cmd_update(args: argparse.Namespace, logger: Logger) -> int:
     else:
         print("\nNo updates available.")
 
-    if not update and not orphans and not install:
+    if not update and not orphans:
         print("Everything is up to date.")
         return 0
 

@@ -29,9 +29,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it, and recursively installs `requires` dependencies from the same sources
   (still falling back to the local registry as a last resort).
 - **pure update**: `cs2lm update` only updates locally installed plugins.
-  Missing plugins are listed with a `cs2lm install <name>` hint instead of
-  being auto-installed. `--self` attempts to update the tool itself (git
+  Missing plugins are **not listed or auto-installed** (huge indexes would
+  drown out useful output); `--self` attempts to update the tool itself (git
   pull in a checkout).
+- **multi-framework support**: new `cs2lm/frameworks.py` registry covering
+  Metamod:Source (`metamod`), CounterStrikeSharp (`css`), SwiftlyS2
+  (`swiftly`), Plugify (`plugify`) and ModSharp (`modsharp`). `--type`
+  choices and `plugin_type` accept ids/aliases; `classify_plugin` auto-detects
+  each framework root in the `addons/` tree; copy/link/normalisation logic is
+  generalized to `plugins/<Name>` + `configs/plugins/<Name>` layouts.
+- **framework detection & install guard**: `detect_frameworks(server,
+  csgo_rel)` reports which frameworks are installed; `install` refuses to link
+  a plugin whose framework is missing on the server (clear error, `--force`
+  overrides); `doctor --verbose` lists framework status.
+- **web management API**: `web` now shows the server's installed frameworks on
+  the status card and exposes `GET /api/status`, `GET /api/plugins`,
+  `GET /api/catalog`, `POST /api/install`, `POST /api/uninstall` and
+  `POST /api/update`; the page gains catalog search with one-click install and
+  an "update all" button.
 - **stricter index validation**: merge skips (with warnings) entries that
   are non-SemVer, missing/invalid `sha256`, `yanked: true`, or whose
   `api_version` falls outside the configured `update.api_version_range`;

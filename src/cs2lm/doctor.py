@@ -243,6 +243,31 @@ def run_doctor(repo: str | Path, logger: Logger | None = None, verbose: bool = F
             }
         )
 
+    # -- framework detection ------------------------------------------------
+    # Report which plugin frameworks are installed so web UIs / users can see
+    # at a glance whether a plugin's framework is present on the server.
+    # These are informational, so they only appear with ``--verbose``.
+    if verbose:
+        from cs2lm.frameworks import detect_frameworks
+
+        for fw in detect_frameworks(server, csgo_rel):
+            if fw["installed"]:
+                issues.append(
+                    {
+                        "severity": "info",
+                        "code": f"framework-{fw['id']}",
+                        "message": f"{fw['name']} detected under addons/{fw['root']}",
+                    }
+                )
+            else:
+                issues.append(
+                    {
+                        "severity": "info",
+                        "code": f"framework-{fw['id']}",
+                        "message": f"{fw['name']} is not installed on the server",
+                    }
+                )
+
     # -- core framework / server structure ----------------------------------
     # These checks confirm the server is laid out correctly and Metamod is
     # actually wired into the engine. Core files are never modified.

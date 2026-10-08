@@ -133,6 +133,17 @@ class PluginManager:
 
     def _install_plugin(self, name: str) -> None:
         manifest = load_manifest(self.repo, name)
+        if not self.force:
+            from cs2lm.frameworks import FrameworkMissingError, require_framework_present
+
+            try:
+                require_framework_present(
+                    self.server,
+                    self.csgo_rel,
+                    manifest.get("plugin_type", ""),
+                )
+            except FrameworkMissingError as exc:
+                raise InstallError(str(exc)) from exc
         state = self._load_state()
         created: list[dict] = []
         try:

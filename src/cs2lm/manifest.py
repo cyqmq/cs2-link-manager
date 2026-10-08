@@ -17,6 +17,13 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from cs2lm.frameworks import (
+    ROOT_TO_ID,
+    framework_info,
+    framework_ids,
+    normalize_framework,
+)
+
 MANIFEST_FILENAME = "manifest.json"
 PLUGIN_ROOT = "plugins"
 FILES_DIR = "files"
@@ -84,11 +91,18 @@ def save_manifest(repo: str | Path, name: str, manifest: dict) -> None:
 # ---------------------------------------------------------------------------
 
 def classify_plugin(source: str | Path, type_hint: str | None = None) -> str:
-    """Classify a plugin package as ``css`` or ``metamod``."""
-    if type_hint in ("css", "metamod"):
-        return type_hint
+    """Classify a plugin package as ``css``, ``metamod``, ``swiftly``, ..."""
+    canonical = normalize_framework(type_hint)
+    if canonical:
+        return canonical
     src = Path(source)
     if src.is_dir():
+        addons = src / "addons"
+        if addons.is_dir():
+            for child in sorted(addons.iterdir()):
+                fw_id = ROOT_TO_ID.get(child.name)
+                if fw_id:
+                    return fw_id
         if (src / "addons" / "counterstrikesharp").exists():
             return "css"
         if (src / "addons" / "metamod").exists():
@@ -110,82 +124,16 @@ def classify_plugin(source: str | Path, type_hint: str | None = None) -> str:
         if src.suffix.lower() in (".so", ".dll", ".vdf"):
             return "metamod"
     raise ValueError(
-        "Could not detect plugin type (expected a CSS plugin folder or an "
-        "addons/ tree). Use --type css|metamod to override."
+        "Could not detect plugin type (expected a plugin folder or an "
+        "addons/ tree). Use --type "
+        + "|".join(framework_ids())
+        + " to override."
     )
 
 
 # ---------------------------------------------------------------------------
 # Copying plugin content into the repository
 # ---------------------------------------------------------------------------
-
-def _copy_css_source(source: Path, name: str, files_root: Path) -> None:
-    if source.is_dir() and (source / "addons").is_dir():
-        shutil.copytree(source / "addons", files_root / "addons")
-        _normalize_css_plugin_dirs(files_root, name)
-    else:
-        dest = files_root / "addons" / "counterstrikesharp" / "plugins" / name
-        if source.is_dir():
-            shutil.copytree(source, dest)
-        else:
-            dest.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source, dest / source.name)
-
-
-def _rename_css_entries(css: Path, old: str, new: str) -> None:
-    """Rename plugin-specific entries from ``old`` to ``new``.
-
-    Covers the standard CSS plugin locations that
-    :func:`_collect_css_links` scans: ``plugins/``, ``configs/plugins/``,
-    ``configs/``, ``lang/``, ``gamedata/`` and ``gamedata/plugins/``.
-    """
-    roots = [
-        css / "plugins",
-        css / "configs" / "plugins",
-        css / "configs",
-        css / "lang",
-        css / "gamedata",
-        css / "gamedata" / "plugins",
-    ]
-    for root in roots:
-        if not root.is_dir():
-            continue
-        for child in sorted(root.iterdir()):
-            if child.name == old or child.name.startswith(old + "."):
-                child.rename(root / (new + child.name[len(old):]))
-
-
-def _normalize_css_plugin_dirs(files_root: Path, name: str) -> None:
-    """Rename the plugin directories inside a copied ``addons/`` tree to ``name``.
-
-    A package may ship as ``addons/counterstrikesharp/plugins/DemoPlugin/``
-    while the user adds it as ``cs2lm add Renamed ./DemoPlugin/``. Without
-    normalization the manifest is stored as ``Renamed`` but links point at
-    ``plugins/DemoPlugin``, which breaks install/uninstall and profile
-    switching. When exactly one plugin directory is present, it (and its
-    matching configs/lang/gamedata entries) are renamed to the repository
-    name.
-    """
-    css = files_root / "addons" / "counterstrikesharp"
-    if not css.is_dir():
-        return
-    plugins_dir = css / "plugins"
-    if not plugins_dir.is_dir():
-        return
-    plugin_dirs = [p for p in plugins_dir.iterdir() if p.is_dir()]
-    if len(plugin_dirs) != 1:
-        names = ", ".join(p.name for p in plugin_dirs)
-        raise ValueError(
-            f"Package contains {len(plugin_dirs)} plugin directories under "
-            f"'plugins/': {names}. Use '--plugins {','.join(p.name for p in plugin_dirs)}' "
-            f"to split it into separate repository entries, or extract and add "
-            "each plugin separately."
-        )
-    old_name = plugin_dirs[0].name
-    if old_name == name or not old_name:
-        return
-    _rename_css_entries(css, old_name, name)
-
 
 def _copy_metamod_source(source: Path, name: str, files_root: Path) -> None:
     if source.is_dir() and (source / "addons").is_dir():
@@ -200,11 +148,107 @@ def _copy_metamod_source(source: Path, name: str, files_root: Path) -> None:
         )
 
 
-def _copy_source(plugin_type: str, source: Path, name: str, files_root: Path) -> None:
-    if plugin_type == "css":
-        _copy_css_source(source, name, files_root)
+def _copy_framework_source(
+    info: dict,
+    source: Path,
+    name: str,
+    files_root: Path,
+) -> None:
+    """Copy a non-Metamod framework plugin (CSS, Swiftly, Plugify, ModSharp)."""
+    addons = source / "addons"
+    if source.is_dir() and addons.is_dir():
+        shutil.copytree(addons, files_root / "addons")
+        _normalize_framework_plugin_dirs(files_root, name, info)
     else:
+        plugin_rel = info.get("plugin_rel") or "plugins"
+        dest = files_root / "addons" / info["root"] / plugin_rel / name
+        if source.is_dir():
+            shutil.copytree(source, dest)
+        else:
+            dest.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, dest / source.name)
+
+
+def _copy_source(plugin_type: str, source: Path, name: str, files_root: Path) -> None:
+    info = framework_info(plugin_type)
+    if info is not None and info["id"] == "metamod":
         _copy_metamod_source(source, name, files_root)
+    else:
+        if info is None:
+            # Legacy: any non-css package was treated as metamod; fall back.
+            info = framework_info("metamod")
+            _copy_metamod_source(source, name, files_root)
+            return
+        _copy_framework_source(info, source, name, files_root)
+
+
+def _rename_framework_entries(
+    root_dir: Path,
+    old: str,
+    new: str,
+    plugin_rel: str = "plugins",
+) -> None:
+    """Rename plugin-specific entries from ``old`` to ``new``.
+
+    Covers the standard plugin locations that
+    :func:`_collect_framework_links` scans: ``<plugin_rel>/``,
+    ``configs/<plugin_rel>/``, ``configs/``, ``lang/``, ``gamedata/`` and
+    ``gamedata/<plugin_rel>/``.
+    """
+    roots = [
+        root_dir / plugin_rel,
+        root_dir / "configs" / plugin_rel,
+        root_dir / "configs",
+        root_dir / "lang",
+        root_dir / "gamedata",
+        root_dir / "gamedata" / plugin_rel,
+    ]
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for child in sorted(root.iterdir()):
+            if child.name == old or child.name.startswith(old + "."):
+                child.rename(root / (new + child.name[len(old):]))
+
+
+def _normalize_framework_plugin_dirs(
+    files_root: Path,
+    name: str,
+    info: dict,
+) -> None:
+    """Rename the plugin directories inside a copied ``addons/`` tree to ``name``.
+
+    A package may ship as ``addons/<root>/plugins/DemoPlugin/`` while the
+    user adds it as ``cs2lm add Renamed ./DemoPlugin/``. Without normalization
+    the manifest is stored as ``Renamed`` but links point at
+    ``plugins/DemoPlugin``, which breaks install/uninstall and profile
+    switching. When exactly one plugin directory is present, it (and its
+    matching configs/lang/gamedata entries) are renamed to the repository
+    name.
+    """
+    root_dir = files_root / "addons" / info["root"]
+    if not root_dir.is_dir():
+        return
+    plugin_rel = info.get("plugin_rel")
+    if not plugin_rel:
+        return
+    plugins_dir = root_dir / plugin_rel
+    if not plugins_dir.is_dir():
+        return
+    plugin_dirs = [p for p in plugins_dir.iterdir() if p.is_dir()]
+    if len(plugin_dirs) != 1:
+        names = ", ".join(p.name for p in plugin_dirs)
+        raise ValueError(
+            f"Package contains {len(plugin_dirs)} plugin directories under "
+            f"'{plugin_rel}/': {names}. Use '--plugins "
+            f"{','.join(p.name for p in plugin_dirs)}' to split it into "
+            f"separate repository entries, or extract and add each plugin "
+            "separately."
+        )
+    old_name = plugin_dirs[0].name
+    if old_name == name or not old_name:
+        return
+    _rename_framework_entries(root_dir, old_name, name, plugin_rel)
 
 
 # ---------------------------------------------------------------------------
@@ -248,23 +292,28 @@ def _dir_link(files_root: Path, child: Path, csgo_rel: str, kind: str | None = N
     }
 
 
-def _collect_css_links(files_root: Path, plugin_name: str, csgo_rel: str) -> list[dict]:
-    """Collect link entries for a CSS plugin's file tree (mirroring addons/)."""
+def _collect_framework_links(
+    files_root: Path,
+    root_name: str,
+    plugin_name: str,
+    csgo_rel: str,
+) -> list[dict]:
+    """Collect link entries mirroring a framework's ``addons/`` file tree."""
     links: list[dict] = []
     addons = files_root / "addons"
     if not addons.is_dir():
         return links
-    css = addons / "counterstrikesharp"
-    if not css.is_dir():
+    root_dir = addons / root_name
+    if not root_dir.is_dir():
         return links
 
-    plugins_dir = css / "plugins"
+    plugins_dir = root_dir / "plugins"
     if plugins_dir.is_dir():
         for child in sorted(plugins_dir.iterdir()):
             if child.is_dir():
                 links.append(_dir_link(files_root, child, csgo_rel))
 
-    configs_dir = css / "configs"
+    configs_dir = root_dir / "configs"
     if configs_dir.is_dir():
         cplugins = configs_dir / "plugins"
         if cplugins.is_dir():
@@ -277,7 +326,7 @@ def _collect_css_links(files_root: Path, plugin_name: str, csgo_rel: str) -> lis
             if child.name == plugin_name or child.name.startswith(plugin_name + "."):
                 links.append(_dir_link(files_root, child, csgo_rel))
 
-    gamedata_dir = css / "gamedata"
+    gamedata_dir = root_dir / "gamedata"
     if gamedata_dir.is_dir():
         for child in sorted(gamedata_dir.iterdir()):
             if child.name == plugin_name:
@@ -287,13 +336,13 @@ def _collect_css_links(files_root: Path, plugin_name: str, csgo_rel: str) -> lis
                     if sub.name == plugin_name or sub.name.startswith(plugin_name):
                         links.append(_dir_link(files_root, sub, csgo_rel))
 
-    lang_dir = css / "lang"
+    lang_dir = root_dir / "lang"
     if lang_dir.is_dir():
         for child in sorted(lang_dir.iterdir()):
             if child.name == plugin_name:
                 links.append(_dir_link(files_root, child, csgo_rel))
 
-    shared_dir = css / "shared"
+    shared_dir = root_dir / "shared"
     if shared_dir.is_dir():
         for child in sorted(shared_dir.iterdir()):
             if child.is_dir():
@@ -487,11 +536,13 @@ def add_plugin(
         for entry in files:
             entry["target"] = _target_for(entry["source"], csgo_rel)
 
-        if plugin_type == "css":
-            links = _collect_css_links(files_root, name, csgo_rel)
-            ini_lines: list[str] = []
-        else:
+        if plugin_type == "metamod":
             links, ini_lines = _collect_metamod_links(files_root, name, csgo_rel)
+        else:
+            info = framework_info(plugin_type)
+            root_name = info["root"] if info else "counterstrikesharp"
+            links = _collect_framework_links(files_root, root_name, name, csgo_rel)
+            ini_lines: list[str] = []
 
         manifest = {
             "name": name,

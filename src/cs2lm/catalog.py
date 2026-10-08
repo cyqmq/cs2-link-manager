@@ -4,11 +4,13 @@
 ``index.json`` sources plus the local registry, annotated with the local
 install status and a 1-based number.  ``cs2lm install <name|#N>`` uses
 this catalog to install missing plugins directly from a source, pulling in
-``requires`` dependencies automatically.
+``requires`` dependencies automatically. The same catalog helpers back the
+web API.
 """
 from __future__ import annotations
 
 import json
+import tempfile
 from pathlib import Path
 
 from cs2lm.versions import version_gt
@@ -250,3 +252,152 @@ def install_from_index_with_deps(
         elif result["status"] == "error":
             errors.append(plugin)
     return {"name": name, "installed": installed, "errors": errors}
+
+
+def install_plugin(
+    repo: str | Path,
+    name: str,
+    *,
+    dry_run: bool = False,
+    backup: bool = False,
+    force: bool = False,
+    yes: bool = False,
+    timeout: int | None = None,
+    from_registry: bool = False,
+    logger=None,
+) -> dict:
+    """Install a plugin by name or catalog reference (``#N``).
+
+    Resolution order:
+    1. ``#N`` -> the ``state/search_result.json`` snapshot;
+    2. already in the repository -> local manifest install;
+    3. missing -> merged index sources (``requires`` dependencies included);
+    4. missing -> local registry (forced by ``from_registry``);
+    5. none -> :class:`ValueError`.
+
+    Returns ``{"name": ..., "messages": [...], "status": "ok"|"error"}``.
+    """
+    from cs2lm.config import load_config
+    from cs2lm.installer import PluginManager
+    from cs2lm.manifest import add_plugin, list_plugins, split_css_plugins
+    from cs2lm.registry import load_registry
+    from cs2lm.sources import fetch_and_merge, get_sources
+    from cs2lm.url_add import (
+        DownloadError,
+        download_and_extract,
+        resolve_addons_subdir,
+    )
+
+    name = str(name)
+    registry_entry: dict | None = None
+
+    if name.startswith("#"):
+        try:
+            ref = int(name[1:])
+        except ValueError:
+            raise ValueError(f"Invalid catalog reference: {name}")
+        row = next(
+            (r for r in load_search_results(repo) if r.get("index") == ref),
+            None,
+        )
+        if not row:
+            raise ValueError(f"No catalog result #{ref}. Run 'cs2lm search' first.")
+        name = row["name"]
+        if row.get("source_kind") == "registry":
+            registry_entry = row.get("entry")
+
+    messages: list[str] = []
+
+    if not from_registry and name not in list_plugins(repo):
+        cfg = load_config(repo)
+        sources = get_sources(cfg)
+        fetch_timeout = timeout or cfg.get("update", {}).get("timeout", 30)
+        api_range = cfg.get("update", {}).get("api_version_range")
+        if sources:
+            merged, _results = fetch_and_merge(
+                repo,
+                sources,
+                timeout=fetch_timeout,
+                api_version_range=api_range,
+            )
+            if name in merged:
+                result = install_from_index_with_deps(
+                    repo,
+                    name,
+                    merged,
+                    dry_run=dry_run,
+                    logger=logger,
+                )
+                for plugin in result["installed"]:
+                    verb = "would install" if dry_run else "installed"
+                    messages.append(
+                        f"{plugin}: {verb} {merged[plugin].get('version')}."
+                    )
+                if result["errors"]:
+                    messages.append(f"Install failed: {', '.join(result['errors'])}")
+                    return {"name": name, "messages": messages, "status": "error"}
+                return {"name": name, "messages": messages, "status": "ok"}
+
+    if from_registry or (registry_entry is None and name not in list_plugins(repo)):
+        if registry_entry is None:
+            registry_entry = load_registry(repo).get(name)
+        if not registry_entry:
+            raise ValueError(
+                f"Plugin '{name}' is not in the repository and was not found "
+                "in any configured source or the local registry. Run "
+                "'cs2lm search' to see what is available."
+            )
+        if name not in list_plugins(repo):
+            with tempfile.TemporaryDirectory(prefix="cs2lm-reg-") as tmp:
+                tmp_path = Path(tmp)
+                try:
+                    source = download_and_extract(
+                        registry_entry["url"],
+                        tmp_path,
+                        expected_sha256=registry_entry.get("sha256"),
+                    )
+                except DownloadError as exc:
+                    raise ValueError(str(exc)) from exc
+                if registry_entry.get("addons_subdir"):
+                    source = resolve_addons_subdir(
+                        tmp_path, registry_entry["addons_subdir"]
+                    )
+                plugin_names = registry_entry.get("plugins") or []
+                if len(plugin_names) > 1:
+                    added = 0
+                    for pname, split_src in split_css_plugins(
+                        source, plugin_names, tmp_path
+                    ):
+                        add_plugin(
+                            repo,
+                            pname,
+                            split_src,
+                            type_hint=registry_entry.get("type"),
+                            meta=registry_entry,
+                        )
+                        added += 1
+                    messages.append(
+                        f"Added {added} plugins from registry package '{name}'."
+                    )
+                else:
+                    add_plugin(
+                        repo,
+                        name,
+                        source,
+                        type_hint=registry_entry.get("type"),
+                        meta=registry_entry,
+                    )
+                    messages.append(f"Added '{name}' from registry.")
+
+    manager = PluginManager(
+        repo,
+        dry_run=dry_run,
+        backup=backup,
+        force=force,
+        yes=yes,
+        logger=logger,
+    )
+    manager.install(name)
+    if not dry_run:
+        messages.append(f"Installed {name}.")
+    return {"name": name, "messages": messages, "status": "ok"}
