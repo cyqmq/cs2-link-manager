@@ -17,11 +17,14 @@ def download_and_extract(
     url: str,
     dest_dir: str | Path,
     expected_sha256: str | None = None,
+    headers: dict | None = None,
+    timeout: int = 60,
 ) -> Path:
     """Download a zip from ``url`` and extract it into ``dest_dir``.
 
     When ``expected_sha256`` is given, the downloaded bytes are verified
     against it before extraction (registry ``--sha256`` integrity check).
+    ``headers`` are added to the HTTP request (private-source auth).
     Returns the plugin package root directory inside ``dest_dir`` (a path that
     can be passed to ``manifest.add_plugin``). Raises :class:`DownloadError`
     on network, HTTP, checksum, or zip failures.
@@ -29,8 +32,9 @@ def download_and_extract(
     dest = Path(dest_dir)
     dest.mkdir(parents=True, exist_ok=True)
     zip_path = dest / "download.zip"
+    request = urllib.request.Request(url, headers=dict(headers or {}))
     try:
-        with urllib.request.urlopen(url, timeout=60) as response:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
             data = response.read()
     except Exception as exc:  # noqa: BLE001 - wrap all network errors
         raise DownloadError(f"Failed to download {url}: {exc}") from exc

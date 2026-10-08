@@ -7,7 +7,7 @@ from pathlib import Path
 
 from cs2lm import cli, linking
 from cs2lm.installer import PluginManager
-from cs2lm.manifest import add_plugin, load_manifest
+from cs2lm.manifest import add_plugin, list_plugins, load_manifest
 from cs2lm.updater import update_plugin
 
 from conftest import make_css_package
@@ -99,51 +99,48 @@ def test_update_plugin_reinstalls_links(repo_server, tmp_path):
     assert linking.path_exists(target)
 
 
+def _write_index(tmp_path: Path, plugins: dict) -> Path:
+    """Write an index.json file and return its path."""
+    import json
+
+    path = tmp_path / "index.json"
+    path.write_text(
+        json.dumps({"schema": 1, "name": "test-source", "plugins": plugins}),
+        encoding="utf-8",
+    )
+    return path
+
+
 def test_cli_update_command(repo_server, tmp_path):
-    """cs2lm update <name> --yes works end-to-end via registry."""
+    """cs2lm update <name> --yes works end-to-end via an index.json source."""
     repo, _server = repo_server
     pkg = make_css_package(tmp_path, "CliUpd")
     add_plugin(repo, "CliUpd", pkg)
-    zip_path = _zip_package(pkg, tmp_path / "v1.zip")
 
-    assert (
-        cli.main(
-            [
-                "--repo",
-                str(repo),
-                "registry",
-                "add",
-                "CliUpd",
-                zip_path.as_uri(),
-                "--type",
-                "css",
-            ]
-        )
-        == 0
-    )
-
-    # v2: change the dll.
     dll = pkg / "addons" / "counterstrikesharp" / "plugins" / "CliUpd" / "CliUpd.dll"
     dll.write_bytes(b"V2")
     zip_path2 = _zip_package(pkg, tmp_path / "v2.zip")
+    index_path = _write_index(
+        tmp_path,
+        {
+            "CliUpd": {
+                "id": "CliUpd",
+                "version": "2.0.0",
+                "download_url": zip_path2.as_uri(),
+                "plugin_type": "css",
+            }
+        },
+    )
+
     assert (
         cli.main(
-            [
-                "--repo",
-                str(repo),
-                "registry",
-                "add",
-                "CliUpd",
-                zip_path2.as_uri(),
-                "--type",
-                "css",
-            ]
+            ["--repo", str(repo), "source", "add", index_path.as_uri()]
         )
         == 0
     )
-
     assert cli.main(["--repo", str(repo), "update", "CliUpd", "--yes"]) == 0
     manifest = load_manifest(repo, "CliUpd")
+    assert manifest["version"] == "2.0.0"
     dll_entry = next(f for f in manifest["files"] if f["source"].endswith("CliUpd.dll"))
     assert dll_entry["sha256"] == hashlib.sha256(b"V2").hexdigest()
 
@@ -153,34 +150,23 @@ def test_cli_update_dry_run_flag(repo_server, tmp_path):
     repo, _server = repo_server
     pkg = make_css_package(tmp_path, "DryUpd")
     add_plugin(repo, "DryUpd", pkg)
-    zip_path = _zip_package(pkg, tmp_path / "dry1.zip")
-    assert (
-        cli.main(
-            [
-                "--repo",
-                str(repo),
-                "registry",
-                "add",
-                "DryUpd",
-                zip_path.as_uri(),
-            ]
-        )
-        == 0
-    )
+
     dll = pkg / "addons" / "counterstrikesharp" / "plugins" / "DryUpd" / "DryUpd.dll"
     dll.write_bytes(b"NEW")
     zip_path2 = _zip_package(pkg, tmp_path / "dry2.zip")
+    index_path = _write_index(
+        tmp_path,
+        {
+            "DryUpd": {
+                "id": "DryUpd",
+                "version": "1.1.0",
+                "download_url": zip_path2.as_uri(),
+                "plugin_type": "css",
+            }
+        },
+    )
     assert (
-        cli.main(
-            [
-                "--repo",
-                str(repo),
-                "registry",
-                "add",
-                "DryUpd",
-                zip_path2.as_uri(),
-            ]
-        )
+        cli.main(["--repo", str(repo), "source", "add", index_path.as_uri()])
         == 0
     )
 
@@ -190,7 +176,7 @@ def test_cli_update_dry_run_flag(repo_server, tmp_path):
 
 
 def test_cli_update_multi_plugin(repo_server, tmp_path):
-    """cs2lm update <pkg> --yes updates each plugin in a multi-plugin entry."""
+    """cs2lm update refreshes each plugin in a multi-plugin package."""
     from conftest import make_multi_css_package
     from cs2lm.manifest import split_css_plugins
 
@@ -202,45 +188,37 @@ def test_cli_update_multi_plugin(repo_server, tmp_path):
         add_plugin(repo, name, src)
 
     zip_path = _zip_package(pkg, tmp_path / "v1.zip")
-    assert (
-        cli.main(
-            [
-                "--repo",
-                str(repo),
-                "registry",
-                "add",
-                "SimpleAdmin",
-                zip_path.as_uri(),
-                "--plugins",
-                "SimpleAdmin,FunCommands",
-            ]
-        )
-        == 0
-    )
-
-    # v2: only SimpleAdmin.dll changes.
     dll = pkg / "addons" / "counterstrikesharp" / "plugins" / "SimpleAdmin" / "SimpleAdmin.dll"
     dll.write_bytes(b"V2")
     zip_path2 = _zip_package(pkg, tmp_path / "v2.zip")
+    index_path = _write_index(
+        tmp_path,
+        {
+            "SimpleAdmin": {
+                "id": "SimpleAdmin",
+                "version": "2.0.0",
+                "download_url": zip_path2.as_uri(),
+                "plugin_type": "css",
+                "plugins": ["SimpleAdmin", "FunCommands"],
+            },
+            "FunCommands": {
+                "id": "FunCommands",
+                "version": "1.0.0",
+                "download_url": zip_path.as_uri(),
+                "plugin_type": "css",
+                "plugins": ["SimpleAdmin", "FunCommands"],
+            },
+        },
+    )
     assert (
-        cli.main(
-            [
-                "--repo",
-                str(repo),
-                "registry",
-                "add",
-                "SimpleAdmin",
-                zip_path2.as_uri(),
-                "--plugins",
-                "SimpleAdmin,FunCommands",
-            ]
-        )
+        cli.main(["--repo", str(repo), "source", "add", index_path.as_uri()])
         == 0
     )
 
-    assert cli.main(["--repo", str(repo), "update", "SimpleAdmin", "--yes"]) == 0
+    assert cli.main(["--repo", str(repo), "update", "--yes"]) == 0
 
     sa_manifest = load_manifest(repo, "SimpleAdmin")
+    assert sa_manifest["version"] == "2.0.0"
     sa_dll = next(
         f for f in sa_manifest["files"] if f["source"].endswith("SimpleAdmin.dll")
     )
@@ -251,3 +229,191 @@ def test_cli_update_multi_plugin(repo_server, tmp_path):
         f for f in fc_manifest["files"] if f["source"].endswith("FunCommands.dll")
     )
     assert fc_dll["sha256"] == hashlib.sha256(b"MZ").hexdigest()
+
+
+def test_compute_actions():
+    from cs2lm.updater import compute_actions
+
+    merged = {
+        "a": {"version": "1.0.0"},
+        "b": {"version": "2.0.0"},
+        "c": {"version": "0.9.0"},
+    }
+    local = {"b": "1.0.0", "c": "0.9.0", "d": "3.0.0"}
+    install, update, skip, orphans = compute_actions(merged, local)
+    assert install == ["a"]
+    assert update == ["b"]
+    assert skip == ["c"]
+    assert orphans == ["d"]
+
+
+def test_update_plugin_atomic_replace_leaves_no_temp_dirs(repo_server, tmp_path):
+    """After an update no .<name>.new / .<name>.old staging dirs remain."""
+    repo, _server = repo_server
+    pkg = make_css_package(tmp_path, "Atomic")
+    add_plugin(repo, "Atomic", pkg)
+    dll = pkg / "addons" / "counterstrikesharp" / "plugins" / "Atomic" / "Atomic.dll"
+    dll.write_bytes(b"V2")
+    zip_path = _zip_package(pkg, tmp_path / "v2.zip")
+    result = update_plugin(
+        repo, "Atomic", {"url": zip_path.as_uri(), "version": "1.1.0"}, yes=True
+    )
+    assert result["status"] == "changed"
+    plugins_root = repo / "plugins"
+    assert not list(plugins_root.glob(".Atomic.new"))
+    assert not list(plugins_root.glob(".Atomic.old"))
+    assert (plugins_root / "Atomic" / "manifest.json").exists()
+
+
+def test_update_plugin_package_id_mismatch(repo_server, tmp_path):
+    """A package whose manifest id differs from the index is refused."""
+    import json
+
+    repo, _server = repo_server
+    pkg = make_css_package(tmp_path, "IdMismatch")
+    add_plugin(repo, "IdMismatch", pkg)
+    (pkg / "manifest.json").write_text(
+        json.dumps({"id": "Other", "version": "1.0.0"}), encoding="utf-8"
+    )
+    zip_path = _zip_package(pkg, tmp_path / "bad.zip")
+    result = update_plugin(
+        repo,
+        "IdMismatch",
+        {"url": zip_path.as_uri(), "version": "1.0.0"},
+        yes=True,
+    )
+    assert result["status"] == "error"
+    assert "id mismatch" in result["message"]
+
+
+def test_update_plugin_sha256_mismatch(repo_server, tmp_path):
+    """A checksum mismatch aborts the update with an error."""
+    repo, _server = repo_server
+    pkg = make_css_package(tmp_path, "ShaUpd")
+    add_plugin(repo, "ShaUpd", pkg)
+    zip_path = _zip_package(pkg, tmp_path / "sha.zip")
+    result = update_plugin(
+        repo,
+        "ShaUpd",
+        {"url": zip_path.as_uri(), "version": "1.1.0", "sha256": "0" * 64},
+        yes=True,
+    )
+    assert result["status"] == "error"
+    assert "Checksum mismatch" in result["message"]
+
+
+def test_cli_update_installs_missing_and_skips_newer(repo_server, tmp_path):
+    """update installs missing plugins and skips ones already newer."""
+    import json
+
+    repo, _server = repo_server
+    pkg = make_css_package(tmp_path, "Old")
+    add_plugin(repo, "Old", pkg)  # version defaults to 1.0.0
+    new_pkg = make_css_package(tmp_path, "New")
+    zip_new = _zip_package(new_pkg, tmp_path / "new.zip")
+
+    index_path = tmp_path / "index.json"
+    index_path.write_text(
+        json.dumps(
+            {
+                "schema": 1,
+                "plugins": {
+                    "New": {
+                        "id": "New",
+                        "version": "1.0.0",
+                        "download_url": zip_new.as_uri(),
+                        "plugin_type": "css",
+                    },
+                    "Old": {
+                        "id": "Old",
+                        "version": "0.9.0",
+                        "download_url": zip_new.as_uri(),
+                        "plugin_type": "css",
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert cli.main(["--repo", str(repo), "source", "add", index_path.as_uri()]) == 0
+    assert cli.main(["--repo", str(repo), "update", "--yes"]) == 0
+    assert "New" in list_plugins(repo)
+    old_manifest = load_manifest(repo, "Old")
+    assert old_manifest["version"] == "1.0.0"
+
+
+def test_cli_update_orphan_removal(repo_server, tmp_path):
+    """--remove-orphans uninstalls and trashes plugins absent from sources."""
+    import json
+
+    repo, _server = repo_server
+    pkg = make_css_package(tmp_path, "Orphan")
+    add_plugin(repo, "Orphan", pkg)
+    kept = make_css_package(tmp_path, "Kept")
+    add_plugin(repo, "Kept", kept)
+    zip_kept = _zip_package(kept, tmp_path / "kept.zip")
+
+    index_path = tmp_path / "index.json"
+    index_path.write_text(
+        json.dumps(
+            {
+                "schema": 1,
+                "plugins": {
+                    "Kept": {
+                        "id": "Kept",
+                        "version": "1.0.0",
+                        "download_url": zip_kept.as_uri(),
+                        "plugin_type": "css",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert cli.main(["--repo", str(repo), "source", "add", index_path.as_uri()]) == 0
+    assert cli.main(["--repo", str(repo), "update", "--yes", "--remove-orphans"]) == 0
+    assert "Kept" in list_plugins(repo)
+    assert "Orphan" not in list_plugins(repo)
+    assert any((repo / "trash" / "plugins").glob("Orphan-*"))
+
+
+def test_cli_update_requires_expansion(repo_server, tmp_path):
+    """Dependencies listed in index ``requires`` are installed first."""
+    import json
+
+    repo, _server = repo_server
+    dep_pkg = make_css_package(tmp_path, "DepLib")
+    zip_dep = _zip_package(dep_pkg, tmp_path / "dep.zip")
+    main_pkg = make_css_package(tmp_path, "Main")
+    zip_main = _zip_package(main_pkg, tmp_path / "main.zip")
+
+    index_path = tmp_path / "index.json"
+    index_path.write_text(
+        json.dumps(
+            {
+                "schema": 1,
+                "plugins": {
+                    "DepLib": {
+                        "id": "DepLib",
+                        "version": "1.0.0",
+                        "download_url": zip_dep.as_uri(),
+                        "plugin_type": "css",
+                    },
+                    "Main": {
+                        "id": "Main",
+                        "version": "1.0.0",
+                        "download_url": zip_main.as_uri(),
+                        "plugin_type": "css",
+                        "requires": {"DepLib": ">=1.0.0"},
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert cli.main(["--repo", str(repo), "source", "add", index_path.as_uri()]) == 0
+    assert cli.main(["--repo", str(repo), "update", "--yes"]) == 0
+    assert "DepLib" in list_plugins(repo)
+    assert "Main" in list_plugins(repo)
+    main_manifest = load_manifest(repo, "Main")
+    assert main_manifest.get("requires") == {"DepLib": ">=1.0.0"}

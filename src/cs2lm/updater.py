@@ -1,47 +1,51 @@
-"""Plugin update mechanism using registry sources and SHA-256 comparison.
+"""Index-based plugin update mechanism.
 
-``cs2lm update [name...]`` downloads each plugin's registry URL, extracts the
-new package, computes the new file set (SHA-256 per file), and compares it
-against the current manifest:
+``cs2lm update`` follows this flow (see ``docs/INDEX.md`` for the index
+schema):
 
-* no file changed -> "up to date";
-* some files changed -> show a diff summary, then (after confirmation)
-  replace the repository files, regenerate the manifest, and re-sync the
-  server links if the plugin was installed.
+1. fetch every configured source's ``index.json`` (ETag-cached),
+2. merge them into one "latest available plugin table",
+3. scan local plugin manifests to learn each plugin's current version,
+4. compare: missing -> install, remote newer -> update, else skip,
+5. plugins absent from every source are orphans (kept or removed),
+6. execute install/update with staged, atomic directory replacement.
 
-Only files that are recorded in the old manifest are removed during an
-update — nothing outside the plugin's ``files/`` directory is ever touched.
+A plugin directory is replaced atomically: the new package is built in a
+temporary repository, copied to ``.<name>.new``, then the current directory
+is renamed to ``.<name>.old`` and the staging directory is renamed into
+place — a failed rename rolls back from ``.old``.
 """
 from __future__ import annotations
 
 import json
 import shutil
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 from cs2lm.config import load_config
 from cs2lm.logutil import Logger
 from cs2lm.manifest import (
-    FILES_DIR,
-    _collect_css_links,
-    _collect_metamod_links,
-    _copy_source,
-    _detect_dependencies,
-    _now,
-    _target_for,
-    _validate_no_core_overwrites,
-    _walk_files,
-    classify_plugin,
+    add_plugin,
+    list_plugins,
     load_manifest,
     plugin_dir,
+    sanitize_name,
     save_manifest,
 )
+from cs2lm.url_add import DownloadError, download_and_extract, resolve_addons_subdir
+from cs2lm.versions import version_gt
 
 _META_FIELDS = ("author", "description", "license", "homepage", "repository")
+_PKG_META_FILENAMES = ("manifest.json", "cs2pkg.json")
 
 
 class UpdateError(Exception):
     """Raised for user-facing update errors."""
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _confirm(prompt: str) -> bool:
@@ -53,15 +57,228 @@ def _confirm(prompt: str) -> bool:
 
 
 def _find_pkg_meta(extract_dir: Path) -> dict | None:
-    """Look for a ``cs2pkg.json`` inside the extracted archive."""
-    for candidate in sorted(extract_dir.rglob("cs2pkg.json")):
-        try:
-            data = json.loads(candidate.read_text(encoding="utf-8-sig"))
-        except (OSError, json.JSONDecodeError):
-            continue
-        if isinstance(data, dict):
-            return data
+    """Look for the package's authoritative manifest.
+
+    Searches for ``manifest.json`` (index.json spec) or ``cs2pkg.json``
+    (legacy .cs2pkg metadata) anywhere under the extracted archive.
+    """
+    for filename in _PKG_META_FILENAMES:
+        for candidate in sorted(extract_dir.rglob(filename)):
+            try:
+                data = json.loads(candidate.read_text(encoding="utf-8-sig"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if isinstance(data, dict):
+                return data
     return None
+
+
+def _validate_pkg_identity(
+    pkg_meta: dict | None, name: str, version: str | None
+) -> None:
+    """Ensure the downloaded package matches the index entry (id/version)."""
+    if not pkg_meta:
+        return
+    pkg_id = pkg_meta.get("id") or pkg_meta.get("name")
+    if pkg_id and sanitize_name(str(pkg_id)) != sanitize_name(name):
+        raise UpdateError(
+            f"Package id mismatch: index says '{name}', package manifest "
+            f"says '{pkg_id}'. Refusing to install an inconsistent package."
+        )
+    pkg_version = pkg_meta.get("version")
+    if pkg_version and version and str(pkg_version) != str(version):
+        raise UpdateError(
+            f"Package version mismatch: index says {version}, package "
+            f"manifest says {pkg_version}. Refusing to install an "
+            "inconsistent package."
+        )
+
+
+def _resolve_plugin_source(
+    entry: dict, source: Path, name: str, tmp_path: Path
+) -> Path:
+    """For a multi-plugin package, return only the target plugin's addons tree."""
+    plugins = entry.get("plugins") or []
+    if len(plugins) > 1:
+        from cs2lm.manifest import split_css_plugins
+
+        split_sources = split_css_plugins(source, [name], tmp_path)
+        return split_sources[0][1]
+    return source
+
+
+# ---------------------------------------------------------------------------
+# Local scan & action computation
+# ---------------------------------------------------------------------------
+
+
+def scan_local(repo: str | Path) -> dict[str, str]:
+    """Map plugin id -> installed version from local manifests."""
+    result: dict[str, str] = {}
+    for name in list_plugins(repo):
+        try:
+            manifest = load_manifest(repo, name)
+            result[name] = str(manifest.get("version") or "1.0.0")
+        except Exception:  # noqa: BLE001 - skip unreadable manifests
+            continue
+    return result
+
+
+def expand_requires(
+    merged: dict, names: list[str], local: dict[str, str]
+) -> list[str]:
+    """Return ``names`` plus missing required plugins, dependencies first.
+
+    Required plugins are resolved recursively from the merged index and
+    ordered before their dependents so ``manager.install`` never trips over
+    an absent dependency.  Cycles are skipped defensively (the installer
+    reports a real dependency cycle error).
+    """
+    result: list[str] = []
+    visited: set[str] = set()
+
+    def visit(plugin_id: str, stack: set[str]) -> None:
+        if plugin_id in visited:
+            return
+        if plugin_id in stack:
+            return  # cycle guard
+        stack.add(plugin_id)
+        entry = merged.get(plugin_id, {})
+        req = entry.get("requires") or {}
+        if isinstance(req, dict):
+            deps = [str(k) for k in req.keys()]
+        elif isinstance(req, (list, tuple)):
+            deps = [str(r) for r in req]
+        else:
+            deps = []
+        for dep in deps:
+            if dep not in local:
+                visit(dep, stack)
+        stack.discard(plugin_id)
+        if plugin_id not in local:
+            visited.add(plugin_id)
+            result.append(plugin_id)
+
+    for name in names:
+        visit(name, set())
+    return result
+
+
+def compute_actions(
+    merged: dict, local: dict[str, str]
+) -> tuple[list[str], list[str], list[str], list[str]]:
+    """Compare merged remote plugins against local manifests.
+
+    Returns ``(install, update, skip, orphans)``:
+    * remote has it, local missing -> install;
+    * remote version > local -> update;
+    * remote version <= local -> skip;
+    * local only -> orphan.
+    """
+    install: list[str] = []
+    update: list[str] = []
+    skip: list[str] = []
+    for plugin_id in sorted(merged):
+        version = str(merged[plugin_id].get("version") or "")
+        if plugin_id not in local:
+            install.append(plugin_id)
+        elif version_gt(version, local[plugin_id]):
+            update.append(plugin_id)
+        else:
+            skip.append(plugin_id)
+    orphans = sorted(set(local) - set(merged))
+    return install, update, skip, orphans
+
+
+# ---------------------------------------------------------------------------
+# Update log
+# ---------------------------------------------------------------------------
+
+
+def _log_update(repo: str | Path, record: dict) -> None:
+    path = Path(repo) / "state" / "update_log.json"
+    logs: list[dict] = []
+    if path.exists():
+        try:
+            logs = json.loads(path.read_text(encoding="utf-8-sig"))
+        except (OSError, json.JSONDecodeError):
+            logs = []
+    logs.append(record)
+    path.write_text(
+        json.dumps(logs, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Installing from the merged index
+# ---------------------------------------------------------------------------
+
+
+def install_plugin_from_index(
+    repo: str | Path,
+    name: str,
+    entry: dict,
+    dry_run: bool = False,
+    manager=None,
+    logger: Logger | None = None,
+) -> dict:
+    """Download, verify and add a plugin that is missing locally."""
+    logger = logger or Logger()
+    if dry_run:
+        return {
+            "name": name,
+            "status": "would-install",
+            "version": entry.get("version"),
+            "dry_run": True,
+        }
+    url = entry.get("download_url") or entry.get("url")
+    try:
+        with tempfile.TemporaryDirectory(prefix="cs2lm-inst-") as tmp:
+            tmp_path = Path(tmp)
+            source = download_and_extract(
+                url,
+                tmp_path,
+                expected_sha256=entry.get("sha256"),
+                headers=entry.get("headers") or {},
+                timeout=int(entry.get("timeout") or 60),
+            )
+            if entry.get("addons_subdir"):
+                source = resolve_addons_subdir(tmp_path, entry["addons_subdir"])
+            pkg_meta = _find_pkg_meta(tmp_path)
+            _validate_pkg_identity(pkg_meta, name, str(entry.get("version") or ""))
+            source = _resolve_plugin_source(entry, source, name, tmp_path)
+            add_plugin(
+                repo,
+                name,
+                source,
+                type_hint=entry.get("plugin_type") or entry.get("type"),
+                version=entry.get("version"),
+                meta=entry,
+            )
+        manager = manager or PluginManager(repo, logger=logger)
+        manager.install(name)
+        _log_update(
+            repo,
+            {
+                "id": name,
+                "action": "install",
+                "old_version": None,
+                "new_version": entry.get("version"),
+                "source": entry.get("source"),
+                "status": "ok",
+                "timestamp": _now(),
+            },
+        )
+        return {"name": name, "status": "installed", "version": entry.get("version")}
+    except Exception as exc:  # noqa: BLE001 - wrap for the CLI
+        logger.error("update", f"{name}: install failed: {exc}")
+        return {"name": name, "status": "error", "message": str(exc)}
+
+
+# ---------------------------------------------------------------------------
+# Updating an existing plugin (atomic directory replacement)
+# ---------------------------------------------------------------------------
 
 
 def update_plugin(
@@ -72,7 +289,7 @@ def update_plugin(
     yes: bool = False,
     logger: Logger | None = None,
 ) -> dict:
-    """Update one plugin from its registry entry.
+    """Update one plugin from its index/registry entry.
 
     Returns a report dict with ``status`` in
     ``{"up-to-date", "changed", "aborted", "not-in-repo", "error"}``.
@@ -86,82 +303,74 @@ def update_plugin(
             "status": "not-in-repo",
             "message": (
                 "plugin is not in the repository; use "
-                "'cs2lm install <name> --from-registry' to add it first"
+                "'cs2lm update' so it gets installed from the index first"
             ),
         }
 
     old_manifest = load_manifest(repo, name)
-    cfg = load_config(repo)
-    csgo_rel = cfg["csgo_rel"]
-
-    from cs2lm.url_add import download_and_extract, resolve_addons_subdir
+    old_version = old_manifest.get("version")
+    new_version = str(entry.get("version") or old_version or "1.0.0")
+    url = entry.get("download_url") or entry.get("url")
 
     try:
         with tempfile.TemporaryDirectory(prefix="cs2lm-upd-") as tmp:
             tmp_path = Path(tmp)
             source = download_and_extract(
-                entry["url"], tmp_path, expected_sha256=entry.get("sha256")
+                url,
+                tmp_path,
+                expected_sha256=entry.get("sha256"),
+                headers=entry.get("headers") or {},
+                timeout=int(entry.get("timeout") or 60),
             )
             if entry.get("addons_subdir"):
                 source = resolve_addons_subdir(tmp_path, entry["addons_subdir"])
-
-            plugin_type = classify_plugin(source, entry.get("type"))
-            plugins = entry.get("plugins") or []
-            if len(plugins) > 1:
-                from cs2lm.manifest import split_css_plugins
-
-                split_sources = split_css_plugins(source, [name], tmp_path)
-                plugin_source = split_sources[0][1]
-            else:
-                plugin_source = source
-            files_root = tmp_path / FILES_DIR
-            _copy_source(plugin_type, plugin_source, name, files_root)
-            new_files = _walk_files(files_root)
-            _validate_no_core_overwrites(new_files)
-            for f in new_files:
-                f["target"] = _target_for(f["source"], csgo_rel)
-
-            if plugin_type == "css":
-                new_links = _collect_css_links(files_root, name, csgo_rel)
-                new_ini_lines: list[str] = []
-            else:
-                new_links, new_ini_lines = _collect_metamod_links(
-                    files_root, name, csgo_rel
-                )
-            new_deps = _detect_dependencies(plugin_type, files_root)
-
             pkg_meta = _find_pkg_meta(tmp_path)
-            new_version = (pkg_meta or entry).get("version") or old_manifest.get(
-                "version"
+            _validate_pkg_identity(pkg_meta, name, new_version)
+            source = _resolve_plugin_source(entry, source, name, tmp_path)
+
+            # Build the new plugin directory inside a throwaway repository.
+            build_repo = tmp_path / "build-repo"
+            (build_repo / "plugins").mkdir(parents=True, exist_ok=True)
+            shutil.copy2(Path(repo) / "config.json", build_repo / "config.json")
+            new_manifest = add_plugin(
+                build_repo,
+                name,
+                source,
+                type_hint=entry.get("plugin_type") or entry.get("type"),
+                version=new_version,
+                meta=entry,
             )
+            # Carry over metadata that the index does not provide.
+            for field in _META_FIELDS:
+                if not new_manifest.get(field) and old_manifest.get(field):
+                    new_manifest[field] = old_manifest[field]
+                save_manifest(build_repo, name, new_manifest)
 
-            old_files = old_manifest.get("files", [])
-            old_by_source = {f["source"]: f for f in old_files}
-            new_by_source = {f["source"]: f for f in new_files}
-
-            added = sorted(set(new_by_source) - set(old_by_source))
-            removed = sorted(set(old_by_source) - set(new_by_source))
+            old_files = {f["source"]: f for f in old_manifest.get("files", [])}
+            new_files = {f["source"]: f for f in new_manifest["files"]}
+            added = sorted(set(new_files) - set(old_files))
+            removed = sorted(set(old_files) - set(new_files))
             changed = sorted(
                 s
-                for s in set(old_by_source) & set(new_by_source)
-                if old_by_source[s].get("sha256") != new_by_source[s].get("sha256")
+                for s in set(old_files) & set(new_files)
+                if old_files[s].get("sha256") != new_files[s].get("sha256")
             )
             unchanged = len(
                 [
                     s
-                    for s in set(old_by_source) & set(new_by_source)
-                    if old_by_source[s].get("sha256") == new_by_source[s].get("sha256")
+                    for s in set(old_files) & set(new_files)
+                    if old_files[s].get("sha256") == new_files[s].get("sha256")
                 ]
             )
 
-            if not added and not removed and not changed:
+            if not added and not removed and not changed and str(old_version) == str(new_version):
                 logger.info("update", f"{name}: already up to date")
                 return {"name": name, "status": "up-to-date"}
 
             report: dict = {
                 "name": name,
                 "status": "changed",
-                "old_version": old_manifest.get("version"),
+                "old_version": old_version,
                 "new_version": new_version,
                 "added": added,
                 "removed": removed,
@@ -174,60 +383,15 @@ def update_plugin(
                 return report
 
             if not yes and not _confirm(
-                f"Update '{name}'? "
+                f"Update '{name}' {old_version} -> {new_version}? "
                 f"({len(added)} added, {len(removed)} removed, "
                 f"{len(changed)} changed)"
             ):
                 logger.info("update", f"{name}: aborted by user")
                 return {"name": name, "status": "aborted"}
 
-            # --- apply: replace repo files with the new package -------------
-            files_dir = pdir / FILES_DIR
-            for entry_old in old_files:
-                old_path = pdir / Path(entry_old["source"])
-                if old_path.is_file() or old_path.is_symlink():
-                    old_path.unlink()
-            if files_dir.is_dir():
-                for d in sorted(
-                    files_dir.rglob("*"),
-                    key=lambda p: len(p.parts),
-                    reverse=True,
-                ):
-                    if d.is_dir() and not any(d.iterdir()):
-                        d.rmdir()
+            _atomic_replace(repo, name, build_repo, tmp_path)
 
-            for f in new_files:
-                rel = Path(f["source"])
-                src = files_root / f["source"].removeprefix("files/")
-                dst = pdir / rel
-                dst.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(src, dst)
-
-            # --- regenerate manifest ----------------------------------------
-            new_manifest = dict(old_manifest)
-            new_manifest.update(
-                {
-                    "version": new_version or "1.0.0",
-                    "plugin_type": plugin_type,
-                    "updated_at": _now(),
-                    "files": new_files,
-                    "links": new_links,
-                    "ini_lines": new_ini_lines,
-                    "dependencies": new_deps,
-                }
-            )
-            if pkg_meta:
-                for field in _META_FIELDS:
-                    if pkg_meta.get(field):
-                        new_manifest[field] = pkg_meta[field]
-                if isinstance(pkg_meta.get("dependencies"), dict):
-                    for assembly, req in pkg_meta["dependencies"].items():
-                        new_manifest["dependencies"].setdefault(assembly, req)
-                if isinstance(pkg_meta.get("requires"), (list, tuple)) and pkg_meta["requires"]:
-                    new_manifest["requires"] = [str(r) for r in pkg_meta["requires"]]
-            save_manifest(repo, name, new_manifest)
-
-            # --- re-sync server links if the plugin was installed ----------
             from cs2lm.installer import PluginManager
 
             manager = PluginManager(repo, logger=logger)
@@ -239,9 +403,22 @@ def update_plugin(
             else:
                 report["reinstalled"] = False
 
+            _log_update(
+                repo,
+                {
+                    "id": name,
+                    "action": "update",
+                    "old_version": old_version,
+                    "new_version": new_version,
+                    "source": entry.get("source"),
+                    "status": "ok",
+                    "timestamp": _now(),
+                },
+            )
+
             logger.info(
                 "update",
-                f"{name}: updated "
+                f"{name}: updated {old_version} -> {new_version} "
                 f"({len(added)} added, {len(removed)} removed, "
                 f"{len(changed)} changed)",
             )
@@ -250,3 +427,80 @@ def update_plugin(
     except Exception as exc:  # noqa: BLE001 - wrap for the CLI
         logger.error("update", f"{name}: update failed: {exc}")
         return {"name": name, "status": "error", "message": str(exc)}
+
+
+def _atomic_replace(
+    repo: str | Path,
+    name: str,
+    build_repo: Path,
+    tmp_path: Path,
+) -> None:
+    """Swap ``plugins/<name>`` with the freshly built package.
+
+    The new directory is copied to ``.<name>.new``, the live directory is
+    renamed to ``.<name>.old``, the staging directory is renamed into place,
+    and ``.old`` is removed.  A failed swap rolls back from ``.old``.
+    """
+    plugins_root = plugin_dir(repo, name).parent
+    staging = plugins_root / f".{name}.new"
+    old_dir = plugins_root / f".{name}.old"
+    shutil.rmtree(staging, ignore_errors=True)
+    shutil.rmtree(old_dir, ignore_errors=True)
+
+    built = build_repo / "plugins" / name
+    shutil.copytree(built, staging)
+    pdir = plugin_dir(repo, name)
+    pdir.rename(old_dir)
+    try:
+        staging.rename(pdir)
+    except Exception:
+        # Roll back so the previous version stays intact.
+        old_dir.rename(pdir)
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+    shutil.rmtree(old_dir, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------
+# Orphan removal
+# ---------------------------------------------------------------------------
+
+
+def remove_orphans(
+    repo: str | Path,
+    names: list[str],
+    manager=None,
+    logger: Logger | None = None,
+) -> list[str]:
+    """Uninstall and move orphaned plugin dirs into the repo trash."""
+    from cs2lm.installer import PluginManager
+
+    logger = logger or Logger()
+    manager = manager or PluginManager(repo, logger=logger)
+    removed: list[str] = []
+    for name in sorted(names):
+        try:
+            if manager.plugin_has_links(name):
+                manager.uninstall(name)
+            pdir = plugin_dir(repo, name)
+            if pdir.exists():
+                trash = Path(repo) / "trash" / "plugins"
+                trash.mkdir(parents=True, exist_ok=True)
+                dest = trash / f"{name}-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+                shutil.move(str(pdir), str(dest))
+            _log_update(
+                repo,
+                {
+                    "id": name,
+                    "action": "remove-orphan",
+                    "old_version": None,
+                    "new_version": None,
+                    "source": None,
+                    "status": "ok",
+                    "timestamp": _now(),
+                },
+            )
+            removed.append(name)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("update", f"{name}: orphan removal failed: {exc}")
+    return removed

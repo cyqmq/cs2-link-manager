@@ -87,7 +87,9 @@ cs2lm profile use competitive
 | `registry add <name> <url> [--description] [--type] [--addons-subdir] [--sha256 <hex>] [--requires <names>]` | 往本地注册表添加一个插件源（URL）；`--sha256` 记录 zip 校验和，`--requires` 记录依赖插件（逗号分隔）。 |
 | `registry list` / `registry remove <name>` | 列出 / 删除注册表条目。 |
 | `search <query>` | 在本地注册表里搜索插件（名称/描述/URL）。 |
-| `update [name...] [--yes]` | 从注册表 URL 下载新包，按 SHA-256 比对并更新仓库文件；插件已安装时自动重装刷新链接。默认更新注册表里所有已在仓库的插件，可指定名称；`--yes` 跳过确认。 |
+| `update [name...] [--yes] [--remove-orphans] [--timeout <s>]` | 拉取配置的多个 `index.json` 源，合并出每个插件的最新版本，对比本地后自动安装缺失的、更新低版本的；`--remove-orphans` 把不在任何源里的插件移到仓库 trash；`--yes` 跳过确认。 |
+| `source add <index-url> [--name <n>] [--header "K: V"]...` | 添加一个 `index.json` 插件源（可带鉴权 header）。 |
+| `source list` / `source remove <index-url>` / `source clear` | 列出 / 删除 / 清空插件源。 |
 | `profile create <name> [plugins...]` | 创建命名 profile。 |
 | `profile use <name>` | 启用 profile 内插件、禁用其余插件，并打印差异报告。 |
 | `profile list` / `profile delete <name>` | 列出 / 删除 profile。 |
@@ -412,40 +414,64 @@ cs2lm install MatchZy --from-registry
 `cs2lm registry add` 导入即可。awesome-cs2 等仓库的 manifest 列表可以转换
 成这种格式。
 
-### 更新插件（update）
+### index.json 多源更新（update）
+
+`cs2lm` 只认 `index.json`，不认识 tag / Release。每个插件源提供一个
+`index.json`，里面记录该源里每个插件的最高版本和下载地址（完整规范见
+`docs/INDEX.md`）。
 
 ```bash
-# 更新所有注册表里已在仓库的插件
+# 添加插件源（可以是 http/https/file 直链）
+cs2lm source add https://example.com/index.json
+
+# 私有源带鉴权 header
+cs2lm source add https://example.com/private/index.json \
+  --header "Authorization: Bearer xxxxx" --name my-repo
+
+# 查看 / 删除源
+cs2lm source list
+cs2lm source remove https://example.com/index.json
+
+# 更新所有插件
 cs2lm update
 
 # 只更新指定插件
 cs2lm update MatchZy
 
-# 脚本场景跳过确认
+# 脚本场景跳过确认 / 干跑
 cs2lm update --yes
+cs2lm update --dry-run
+
+# 把不在任何源里的插件移到仓库 trash（默认只提示不删除）
+cs2lm update --remove-orphans
 ```
 
 更新流程：
 
-1. 从注册表 URL 下载新包，解压并定位 `addons/` 树（同样支持
-   `--addons-subdir` 语义，注册表条目里记录的 `addons_subdir` 会被使用）；
-2. 对新包逐文件计算 **SHA-256**，与 manifest 里记录的旧校验和比对；
-3. 输出差异摘要：`0 added, 0 removed, 1 changed`（文件级），确认后应用；
-4. 替换仓库 `files/`（只删除旧 manifest 里登记过的文件，绝不碰无关文件），
-   重新生成 manifest（保留作者/许可证等元数据，新包 `cs2pkg.json` 里的
-   会覆盖）；
-5. 如果插件之前已安装，自动卸载旧链接并按新 manifest 重装，服务器即刻
-   生效。
+1. 依次拉取每个源的 `index.json`（带 **ETag 缓存**；单源失败跳过，不影响
+   其他源；网络挂了用上次缓存兜底）；
+2. 按**多源合并规则**得到「每个插件的最高版本 + 下载地址」：每个插件独立
+   取最高版本，版本相同时越靠前的源越优先；
+3. 扫描本地 manifest，对比版本：本地没有 → **安装**；本地版本低 → **更新**；
+   本地相同或更高 → **跳过**；
+4. 安装 / 更新时下载 zip → 校验 `sha256`（若索引里有）→ 解压 → 校验包内
+   `manifest.json` 的 `id` / `version` 与索引一致 → **原子替换**插件目录
+   （`.<name>.new` → 旧目录改 `.<name>.old` → 新目录就位 → 删 `.old`）；
+5. 已安装的插件更新后自动重装链接；每次操作写入 `state/update_log.json`。
 
-`--dry-run` 只报告差异不修改任何文件。
+`--dry-run` 只报告计划，不修改任何文件。
 
 ## 插件依赖管理（requires）
 
-插件可以声明依赖其他仓库插件（如共享库）。manifest 里的 `requires` 是插件名
-列表，`.cs2pkg` 和注册表条目都可以携带：
+插件可以声明依赖其他仓库插件（如共享库）。manifest 里的 `requires` 可以是
+插件名列表，也可以是「插件 ID → 版本范围」的对象（index.json 规范）：
 
 ```json
 { "name": "MainPlugin", "requires": ["SharedLib"] }
+```
+
+```json
+{ "id": "MainPlugin", "requires": { "SharedLib": ">=1.0.0" } }
 ```
 
 行为：

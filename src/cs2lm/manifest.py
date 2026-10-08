@@ -492,12 +492,18 @@ def add_plugin(
             for field in ("author", "description", "license", "homepage", "repository"):
                 if meta.get(field):
                     manifest[field] = meta[field]
+            if meta.get("api_version") is not None:
+                manifest["api_version"] = meta["api_version"]
+            if meta.get("entry"):
+                manifest["entry"] = str(meta["entry"])
             pkg_deps = meta.get("dependencies")
             if isinstance(pkg_deps, dict):
                 for assembly, req in pkg_deps.items():
                     manifest["dependencies"].setdefault(assembly, req)
             requires = meta.get("requires")
-            if isinstance(requires, (list, tuple)) and requires:
+            if isinstance(requires, dict) and requires:
+                manifest["requires"] = dict(requires)
+            elif isinstance(requires, (list, tuple)) and requires:
                 manifest["requires"] = [str(r) for r in requires]
         save_manifest(repo, name, manifest)
         return manifest

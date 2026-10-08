@@ -164,9 +164,22 @@ def build_parser() -> argparse.ArgumentParser:
     p_search = sub.add_parser("search", help="Search the local plugin registry")
     p_search.add_argument("query", nargs="?", default="", help="Search text (name/description/url)")
 
-    p_update = sub.add_parser("update", help="Update plugins from the local registry")
-    p_update.add_argument("names", nargs="*", help="Plugin names to update (default: all registry entries in the repo)")
+    p_update = sub.add_parser("update", help="Fetch configured index.json sources and install/update plugins")
+    p_update.add_argument("names", nargs="*", help="Plugin ids to update (default: every plugin in the merged index)")
     p_update.add_argument("--yes", action="store_true", help="Apply updates without confirmation")
+    p_update.add_argument("--remove-orphans", action="store_true", help="Uninstall and trash plugins absent from every source")
+    p_update.add_argument("--timeout", type=int, default=None, help="Per-source HTTP timeout in seconds (default: config update.timeout)")
+
+    p_source = sub.add_parser("source", help="Manage index.json plugin sources")
+    p_source_sub = p_source.add_subparsers(dest="source_command", required=True)
+    p_source_add = p_source_sub.add_parser("add", help="Add an index.json source URL")
+    p_source_add.add_argument("url", help="URL of the index.json (http/https/file)")
+    p_source_add.add_argument("--name", default=None, help="Source name shown in logs, e.g. 'official-repo'")
+    p_source_add.add_argument("--header", action="append", default=[], help='HTTP header "Name: Value" (repeatable, for private sources)')
+    p_source_list = p_source_sub.add_parser("list", help="List configured sources")
+    p_source_remove = p_source_sub.add_parser("remove", help="Remove a source URL")
+    p_source_remove.add_argument("url")
+    p_source_clear = p_source_sub.add_parser("clear", help="Remove all sources")
 
     return parser
 
@@ -572,53 +585,169 @@ def cmd_search(args: argparse.Namespace, logger: Logger) -> int:
     return 0
 
 
-def cmd_update(args: argparse.Namespace, logger: Logger) -> int:
-    from cs2lm.registry import load_registry
-    from cs2lm.updater import update_plugin
+def cmd_source(args: argparse.Namespace, logger: Logger) -> int:
+    from cs2lm.sources import (
+        add_source,
+        clear_sources,
+        list_sources,
+        remove_source,
+    )
 
-    registry = load_registry(args.repo)
-    if not registry:
-        print("Registry is empty. Add entries with 'cs2lm registry add <name> <url>'.")
+    if args.source_command == "add":
+        headers: dict[str, str] = {}
+        for header in args.header:
+            if ":" in header:
+                key, value = header.split(":", 1)
+                headers[key.strip()] = value.strip()
+            else:
+                raise ValueError(f"Invalid header (expected 'Name: Value'): {header}")
+        add_source(args.repo, args.url, headers=headers, name=args.name)
+        print(f"Source added: {args.url}")
+        logger.info("source", "source added", url=args.url)
+        return 0
+    if args.source_command == "list":
+        sources = list_sources(args.repo)
+        if not sources:
+            print("No sources configured.")
+        else:
+            for i, source in enumerate(sources, 1):
+                label = f"  ({source['name']})" if source.get("name") else ""
+                print(f"{i}. {source['url']}{label}")
+        return 0
+    if args.source_command == "remove":
+        remove_source(args.repo, args.url)
+        print(f"Source removed: {args.url}")
+        return 0
+    if args.source_command == "clear":
+        clear_sources(args.repo)
+        print("All sources removed.")
+        return 0
+    raise ValueError(f"Unknown source command: {args.source_command}")  # pragma: no cover
+
+
+def cmd_update(args: argparse.Namespace, logger: Logger) -> int:
+    from cs2lm.config import load_config
+    from cs2lm.installer import PluginManager
+    from cs2lm.sources import fetch_and_merge, get_sources
+    from cs2lm.updater import (
+        compute_actions,
+        expand_requires,
+        install_plugin_from_index,
+        remove_orphans,
+        scan_local,
+        update_plugin,
+    )
+
+    cfg = load_config(args.repo)
+    sources = get_sources(cfg)
+    if not sources:
+        print("No plugin sources configured. Add one with 'cs2lm source add <index-url>'.")
         return 0
 
-    names = args.names or sorted(registry.keys())
-    results = []
-    for name in names:
-        entry = registry.get(name)
-        if not entry:
-            print(f"Skipping {name}: no registry entry.")
-            continue
-        target_names = entry.get("plugins") or [name]
-        for plugin in target_names:
-            result = update_plugin(
-                args.repo,
-                plugin,
-                entry,
-                dry_run=args.dry_run,
-                yes=args.yes,
-                logger=logger,
-            )
-            results.append(result)
-            status = result["status"]
-            if status == "up-to-date":
-                print(f"{plugin}: already up to date.")
-            elif status == "not-in-repo":
-                print(f"{plugin}: {result['message']}")
-            elif status == "aborted":
-                print(f"{plugin}: update aborted.")
-            elif status == "changed":
-                print(
-                    f"{plugin}: {result['old_version']} -> {result['new_version']} "
-                    f"({len(result['added'])} added, {len(result['removed'])} removed, "
-                    f"{len(result['changed'])} changed"
-                    f"{', dry-run' if result.get('dry_run') else ''})."
-                )
-            elif status == "error":
-                print(f"{plugin}: update failed: {result['message']}")
-            else:  # pragma: no cover
-                print(f"{plugin}: unknown update status {status!r}.")
+    timeout = args.timeout or cfg.get("update", {}).get("timeout", 30)
+    merged, results = fetch_and_merge(args.repo, sources, timeout=timeout)
 
-    errors = [r for r in results if r["status"] == "error"]
+    for result in results:
+        if result.get("error"):
+            print(f"Source {result['url']}: SKIPPED ({result['error']})")
+        else:
+            index = result.get("index") or {}
+            plugins = index.get("plugins") or {}
+            print(f"Source {result['url']}: ok ({len(plugins)} plugins)")
+
+    if args.names:
+        missing = [n for n in args.names if n not in merged]
+        if missing:
+            print("Not in any source: " + ", ".join(missing))
+        merged = {k: v for k, v in merged.items() if k in args.names}
+
+    if not merged:
+        print("No plugins in the merged index.")
+        return 0
+
+    local = scan_local(args.repo)
+    install, update, skipped, orphans = compute_actions(merged, local)
+    install = expand_requires(merged, install, local)
+
+    if not install and not update and not orphans:
+        print("Everything is up to date.")
+        return 0
+
+    print("\nUpdate plan:")
+    for plugin in install:
+        print(f"  install {plugin} {merged[plugin].get('version')} (from {merged[plugin].get('source')})")
+    for plugin in update:
+        print(f"  update  {plugin} {local[plugin]} -> {merged[plugin].get('version')} (from {merged[plugin].get('source')})")
+    for plugin in skipped:
+        print(f"  skip    {plugin} {local[plugin]} (remote <= local)")
+
+    errors: list[str] = []
+    manager = PluginManager(
+        args.repo,
+        dry_run=args.dry_run,
+        yes=args.yes,
+        logger=logger,
+    )
+
+    for plugin in install:
+        result = install_plugin_from_index(
+            args.repo,
+            plugin,
+            merged[plugin],
+            dry_run=args.dry_run,
+            manager=manager,
+            logger=logger,
+        )
+        status = result["status"]
+        if status == "would-install":
+            print(f"{plugin}: would install {result['version']} (dry-run).")
+        elif status == "installed":
+            print(f"{plugin}: installed {result['version']}.")
+        elif status == "error":
+            print(f"{plugin}: install failed: {result['message']}")
+            errors.append(plugin)
+
+    for plugin in update:
+        result = update_plugin(
+            args.repo,
+            plugin,
+            merged[plugin],
+            dry_run=args.dry_run,
+            yes=args.yes,
+            logger=logger,
+        )
+        status = result["status"]
+        if status == "up-to-date":
+            print(f"{plugin}: already up to date.")
+        elif status == "aborted":
+            print(f"{plugin}: update aborted.")
+        elif status == "changed":
+            print(
+                f"{plugin}: {result['old_version']} -> {result['new_version']} "
+                f"({len(result['added'])} added, {len(result['removed'])} removed, "
+                f"{len(result['changed'])} changed"
+                f"{', dry-run' if result.get('dry_run') else ''})."
+            )
+        elif status == "error":
+            print(f"{plugin}: update failed: {result['message']}")
+            errors.append(plugin)
+        elif status == "not-in-repo":
+            print(f"{plugin}: {result['message']}")
+
+    if orphans:
+        auto_remove = bool(cfg.get("update", {}).get("auto_remove_orphans", False))
+        if args.remove_orphans or auto_remove:
+            if args.dry_run:
+                print(f"Would remove orphans: {', '.join(orphans)}")
+            else:
+                removed = remove_orphans(args.repo, orphans, manager=manager, logger=logger)
+                print(f"Removed orphans: {', '.join(removed)}")
+        else:
+            print(
+                f"Orphans (not in any source): {', '.join(orphans)} "
+                "(use --remove-orphans to remove)"
+            )
+
     return 1 if errors else 0
 
 
@@ -669,6 +798,7 @@ HANDLERS = {
     "registry": cmd_registry,
     "search": cmd_search,
     "update": cmd_update,
+    "source": cmd_source,
     "web": cmd_web,
 }
 

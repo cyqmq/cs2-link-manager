@@ -14,6 +14,11 @@ def default_config(repo_path: str | Path, server_path: str | Path, csgo_rel: str
         "repo_path": str(Path(repo_path).resolve()),
         "server_path": str(Path(server_path).resolve()),
         "csgo_rel": csgo_rel,
+        "sources": [],
+        "update": {
+            "timeout": 30,
+            "auto_remove_orphans": False,
+        },
     }
 
 

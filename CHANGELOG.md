@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **index.json plugin sources**: `cs2lm source add/list/remove/clear` manage
+  an ordered list of `index.json` sources (with per-source auth headers).
+  `cs2lm update` now fetches every source (ETag/If-Modified-Since cached,
+  per-source failure isolated, offline fallback to the last merged table),
+  merges them (highest version per plugin; earlier source wins ties), scans
+  local manifests, and installs/updates/skips accordingly. Missing plugins
+  are installed, lower versions are updated via atomic directory replacement
+  (`.<name>.new` -> `.<name>.old` -> swap -> remove `.old`), orphans can be
+  removed with `--remove-orphans`, and every action is appended to
+  `state/update_log.json`. Requires supports version ranges
+  (`{"DepLib": ">=1.0.0"}`) and dependencies are installed first.
+- **index spec**: `docs/INDEX.md` defines the `index.json` schema (v1):
+  top-level `schema`/`name`/`generated_at`/`plugins`, per-plugin entries
+  (`id`/`version`/`download_url`/`sha256`/`api_version`/`requires`/...),
+  merge semantics, version rules, and extension/compatibility conventions.
+- **package identity validation**: install/update verifies the zip's
+  `manifest.json` `id` and `version` match the index entry before applying.
 - **multi-plugin packages**: packages containing several plugin directories
   under `plugins/` (e.g. SimpleAdmin's main plugin + FunCommands +
   StealthModule) can now be split into separate repository entries via
@@ -62,10 +79,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **add**: packages containing multiple plugin directories under
-  `plugins/` are now rejected with a clear message listing the directories,
-  instead of being silently treated as one plugin. The model stays "one
-  repository entry = one plugin".
+- **update**: `cs2lm update` now reads configured `index.json` sources
+  instead of `registry.json` entries. `registry add` remains available for
+  `install --from-registry`; for version-based updates use
+  `cs2lm source add <index-url>`.
+- **requires**: dependency declarations may be an object
+  (`{"DepLib": ">=1.0.0"}`) as well as a plain list of plugin names; the
+  installer accepts both.
 
 ### Fixed
 

@@ -81,12 +81,25 @@ class PluginManager:
         state = self._load_state()
         return bool(self._state_links_for(state, name))
 
+    def _requires_names(self, manifest: dict) -> list[str]:
+        """Dependency plugin ids from a manifest's ``requires``.
+
+        ``requires`` may be a list of plugin names (legacy) or an object
+        mapping plugin id -> version range (index.json spec).
+        """
+        req = manifest.get("requires", [])
+        if isinstance(req, dict):
+            return [str(k) for k in req.keys() if k]
+        if isinstance(req, (list, tuple)):
+            return [str(r) for r in req if r]
+        return []
+
     def _enabled_dependents(self, name: str) -> list[str]:
-        """Installed plugins whose ``requires`` list contains ``name``."""
+        """Installed plugins whose ``requires`` contains ``name``."""
         dependents = []
         for p in list_plugins(self.repo):
             p_manifest = load_manifest(self.repo, p)
-            if name in p_manifest.get("requires", []) and self.plugin_has_links(p):
+            if name in self._requires_names(p_manifest) and self.plugin_has_links(p):
                 dependents.append(p)
         return dependents
 
@@ -104,7 +117,7 @@ class PluginManager:
             )
         seen = seen | {name}
         manifest = load_manifest(self.repo, name)
-        for dep in manifest.get("requires", []):
+        for dep in self._requires_names(manifest):
             if not dep or dep == name:
                 continue
             if dep not in list_plugins(self.repo):

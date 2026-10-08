@@ -123,7 +123,14 @@ def build_pkg(repo: str | Path, name: str, out_path: str | Path) -> Path:
         meta["dependencies"] = deps
     requires = manifest.get("requires")
     if requires:
-        meta["requires"] = list(requires)
+        if isinstance(requires, dict):
+            meta["requires"] = dict(requires)
+        else:
+            meta["requires"] = list(requires)
+    if manifest.get("api_version") is not None:
+        meta["api_version"] = manifest["api_version"]
+    if manifest.get("entry"):
+        meta["entry"] = manifest["entry"]
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr(PKG_META_FILENAME, json.dumps(meta, indent=2) + "\n")
         for f in sorted(files_root.rglob("*")):
