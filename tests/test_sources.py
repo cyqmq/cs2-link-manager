@@ -23,6 +23,8 @@ from cs2lm.sources import (
     remove_source,
 )
 
+FAKE_SHA256 = "0" * 64
+
 
 def write_index(path: Path, plugins: dict, schema: int = 1) -> Path:
     path.write_text(
@@ -70,17 +72,17 @@ def test_merge_highest_version_wins():
     results = [
         make_source_result(
             "s1",
-            {"hello": {"version": "1.2.3", "download_url": "u1"},
-             "bar": {"version": "1.0.0", "download_url": "u1bar"}},
+            {"hello": {"version": "1.2.3", "download_url": "u1", "sha256": FAKE_SHA256},
+             "bar": {"version": "1.0.0", "download_url": "u1bar", "sha256": FAKE_SHA256}},
         ),
         make_source_result(
             "s2",
-            {"hello": {"version": "1.1.0", "download_url": "u2"},
-             "bar": {"version": "1.5.0", "download_url": "u2bar"}},
+            {"hello": {"version": "1.1.0", "download_url": "u2", "sha256": FAKE_SHA256},
+             "bar": {"version": "1.5.0", "download_url": "u2bar", "sha256": FAKE_SHA256}},
         ),
         make_source_result(
             "s3",
-            {"bar": {"version": "1.2.0", "download_url": "u3bar"}},
+            {"bar": {"version": "1.2.0", "download_url": "u3bar", "sha256": FAKE_SHA256}},
         ),
     ]
     merged = merge_sources(results)
@@ -92,8 +94,8 @@ def test_merge_highest_version_wins():
 
 def test_merge_same_version_earlier_source_wins():
     results = [
-        make_source_result("s1", {"foo": {"version": "2.0.0", "download_url": "u1"}}),
-        make_source_result("s2", {"foo": {"version": "2.0.0", "download_url": "u2"}}),
+        make_source_result("s1", {"foo": {"version": "2.0.0", "download_url": "u1", "sha256": FAKE_SHA256}}),
+        make_source_result("s2", {"foo": {"version": "2.0.0", "download_url": "u2", "sha256": FAKE_SHA256}}),
     ]
     merged = merge_sources(results)
     assert merged["foo"]["version"] == "2.0.0"
@@ -103,7 +105,7 @@ def test_merge_same_version_earlier_source_wins():
 def test_merge_failed_source_is_skipped():
     results = [
         {"url": "s1", "index": None, "error": "boom"},
-        make_source_result("s2", {"world": {"version": "0.4.1", "download_url": "u"}}),
+        make_source_result("s2", {"world": {"version": "0.4.1", "download_url": "u", "sha256": FAKE_SHA256}}),
     ]
     merged = merge_sources(results)
     assert merged["world"]["version"] == "0.4.1"
@@ -116,10 +118,72 @@ def test_merge_missing_version_skipped():
 
 
 def test_merge_id_mismatch_uses_key():
-    results = [make_source_result("s1", {"my-plugin": {"id": "Other", "version": "1.0.0"}})]
+    results = [make_source_result("s1", {"my-plugin": {"id": "Other", "version": "1.0.0", "sha256": FAKE_SHA256}})]
     merged = merge_sources(results)
     assert "my-plugin" in merged
     assert merged["my-plugin"]["id"] == "my-plugin"
+
+
+def test_merge_skips_missing_sha256():
+    results = [
+        make_source_result("s1", {"ok": {"version": "1.0.0", "download_url": "u", "sha256": FAKE_SHA256},
+                                     "no-hash": {"version": "1.0.0", "download_url": "u2"}}),
+    ]
+    merged = merge_sources(results)
+    assert "ok" in merged
+    assert "no-hash" not in merged
+    assert results[0]["warnings"]
+
+
+def test_merge_skips_yanked():
+    results = [
+        make_source_result(
+            "s1",
+            {"foo": {"version": "2.0.0", "download_url": "u", "sha256": FAKE_SHA256, "yanked": True},
+             "bar": {"version": "2.0.0", "download_url": "u", "sha256": FAKE_SHA256}},
+        ),
+    ]
+    merged = merge_sources(results)
+    assert "bar" in merged
+    assert "foo" not in merged
+
+
+def test_merge_api_version_range():
+    results = [
+        make_source_result(
+            "s1",
+            {"old": {"version": "1.0.0", "download_url": "u", "sha256": FAKE_SHA256, "api_version": 1},
+             "new": {"version": "2.0.0", "download_url": "u", "sha256": FAKE_SHA256, "api_version": 3}},
+        ),
+    ]
+    merged = merge_sources(results, api_version_range=(1, 2))
+    assert "old" in merged
+    assert "new" not in merged
+
+
+def test_merge_skips_non_semver():
+    results = [
+        make_source_result(
+            "s1",
+            {"latest": {"version": "latest", "download_url": "u", "sha256": FAKE_SHA256},
+             "ok": {"version": "1.0.0", "download_url": "u", "sha256": FAKE_SHA256}},
+        ),
+    ]
+    merged = merge_sources(results)
+    assert "ok" in merged
+    assert "latest" not in merged
+    assert results[0]["warnings"]
+
+
+def test_merge_resolves_relative_download_url():
+    results = [
+        {"url": "https://example.com/plugins/index.json",
+         "index": {"schema": 1, "plugins": {
+             "rel": {"version": "1.0.0", "download_url": "../releases/foo.zip", "sha256": FAKE_SHA256}
+         }}},
+    ]
+    merged = merge_sources(results)
+    assert merged["rel"]["download_url"] == "https://example.com/releases/foo.zip"
 
 
 # ---------------------------------------------------------------------------
@@ -193,7 +257,10 @@ def test_fetch_index_etag_cache(repo_server):
 
 def test_fetch_and_merge_offline_cache(repo_server, tmp_path):
     repo, _server = repo_server
-    index_path = write_index(tmp_path / "index.json", {"p": {"version": "1.0.0"}})
+    index_path = write_index(
+        tmp_path / "index.json",
+        {"p": {"version": "1.0.0", "download_url": "u", "sha256": FAKE_SHA256}},
+    )
     merged, results = fetch_and_merge(repo, [{"url": index_path.as_uri()}], timeout=5)
     assert "p" in merged
 

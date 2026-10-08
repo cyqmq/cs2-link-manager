@@ -644,8 +644,12 @@ def cmd_update(args: argparse.Namespace, logger: Logger) -> int:
         print("No plugin sources configured. Add one with 'cs2lm source add <index-url>'.")
         return 0
 
-    timeout = args.timeout or cfg.get("update", {}).get("timeout", 30)
-    merged, results = fetch_and_merge(args.repo, sources, timeout=timeout)
+    update_cfg = cfg.get("update", {}) or {}
+    timeout = args.timeout or update_cfg.get("timeout", 30)
+    api_range = update_cfg.get("api_version_range")
+    merged, results = fetch_and_merge(
+        args.repo, sources, timeout=timeout, api_version_range=api_range
+    )
 
     for result in results:
         if result.get("error"):
@@ -654,6 +658,8 @@ def cmd_update(args: argparse.Namespace, logger: Logger) -> int:
             index = result.get("index") or {}
             plugins = index.get("plugins") or {}
             print(f"Source {result['url']}: ok ({len(plugins)} plugins)")
+        for warning in result.get("warnings") or []:
+            print(f"  warning: {warning}")
 
     if args.names:
         missing = [n for n in args.names if n not in merged]

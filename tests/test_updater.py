@@ -102,10 +102,30 @@ def test_update_plugin_reinstalls_links(repo_server, tmp_path):
 def _write_index(tmp_path: Path, plugins: dict) -> Path:
     """Write an index.json file and return its path."""
     import json
+    from urllib.parse import urlparse
+    from urllib.request import url2pathname
+
+    def _with_sha(entry: dict) -> dict:
+        out = dict(entry)
+        if "sha256" not in out:
+            url = out.get("download_url") or out.get("url") or ""
+            if url.startswith("file:"):
+                zip_path = Path(url2pathname(urlparse(url).path))
+                if zip_path.is_file():
+                    out["sha256"] = (
+                        hashlib.sha256(zip_path.read_bytes()).hexdigest()
+                    )
+        return out
 
     path = tmp_path / "index.json"
     path.write_text(
-        json.dumps({"schema": 1, "name": "test-source", "plugins": plugins}),
+        json.dumps(
+            {
+                "schema": 1,
+                "name": "test-source",
+                "plugins": {k: _with_sha(v) for k, v in plugins.items()},
+            }
+        ),
         encoding="utf-8",
     )
     return path
@@ -322,12 +342,14 @@ def test_cli_update_installs_missing_and_skips_newer(repo_server, tmp_path):
                         "id": "New",
                         "version": "1.0.0",
                         "download_url": zip_new.as_uri(),
+                        "sha256": hashlib.sha256(zip_new.read_bytes()).hexdigest(),
                         "plugin_type": "css",
                     },
                     "Old": {
                         "id": "Old",
                         "version": "0.9.0",
                         "download_url": zip_new.as_uri(),
+                        "sha256": hashlib.sha256(zip_new.read_bytes()).hexdigest(),
                         "plugin_type": "css",
                     },
                 },
@@ -363,6 +385,7 @@ def test_cli_update_orphan_removal(repo_server, tmp_path):
                         "id": "Kept",
                         "version": "1.0.0",
                         "download_url": zip_kept.as_uri(),
+                        "sha256": hashlib.sha256(zip_kept.read_bytes()).hexdigest(),
                         "plugin_type": "css",
                     }
                 },
@@ -397,12 +420,14 @@ def test_cli_update_requires_expansion(repo_server, tmp_path):
                         "id": "DepLib",
                         "version": "1.0.0",
                         "download_url": zip_dep.as_uri(),
+                        "sha256": hashlib.sha256(zip_dep.read_bytes()).hexdigest(),
                         "plugin_type": "css",
                     },
                     "Main": {
                         "id": "Main",
                         "version": "1.0.0",
                         "download_url": zip_main.as_uri(),
+                        "sha256": hashlib.sha256(zip_main.read_bytes()).hexdigest(),
                         "plugin_type": "css",
                         "requires": {"DepLib": ">=1.0.0"},
                     },

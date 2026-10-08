@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -292,6 +293,12 @@ def _collect_css_links(files_root: Path, plugin_name: str, csgo_rel: str) -> lis
             if child.name == plugin_name:
                 links.append(_dir_link(files_root, child, csgo_rel))
 
+    shared_dir = css / "shared"
+    if shared_dir.is_dir():
+        for child in sorted(shared_dir.iterdir()):
+            if child.is_dir():
+                links.append(_dir_link(files_root, child, csgo_rel))
+
     return _dedupe_links(links)
 
 
@@ -363,7 +370,10 @@ def split_css_plugins(
     mirroring exactly what :func:`_collect_css_links` would link for a single
     plugin: ``plugins/<name>``, ``configs/plugins/<name>``,
     ``configs/<name>.*``, ``lang/<name>``, ``gamedata/<name>`` and
-    ``gamedata/plugins/<name>`` (when present).
+    ``gamedata/plugins/<name>`` (when present).  A ``shared/`` directory in
+    the package is reported on stderr but not copied into the split trees
+    (each split plugin would otherwise install conflicting links to the same
+    server path).
 
     Returns ``(name, source_dir)`` pairs that can be passed to
     :func:`add_plugin`.
@@ -400,15 +410,16 @@ def split_css_plugins(
             )
 
         cfg_root = css / "configs"
-        for child in sorted(cfg_root.iterdir()):
-            if child.name == "plugins":
-                continue
-            if child.name == name or child.name.startswith(name + "."):
-                (dest_css / "configs").mkdir(parents=True, exist_ok=True)
-                if child.is_dir():
-                    shutil.copytree(child, dest_css / "configs" / child.name)
-                else:
-                    shutil.copy2(child, dest_css / "configs" / child.name)
+        if cfg_root.is_dir():
+            for child in sorted(cfg_root.iterdir()):
+                if child.name == "plugins":
+                    continue
+                if child.name == name or child.name.startswith(name + "."):
+                    (dest_css / "configs").mkdir(parents=True, exist_ok=True)
+                    if child.is_dir():
+                        shutil.copytree(child, dest_css / "configs" / child.name)
+                    else:
+                        shutil.copy2(child, dest_css / "configs" / child.name)
 
         lang = css / "lang"
         if (lang / name).is_dir():
@@ -425,6 +436,15 @@ def split_css_plugins(
             shutil.copytree(
                 gamedata / "plugins" / name,
                 dest_css / "gamedata" / "plugins" / name,
+            )
+
+        shared = css / "shared"
+        if shared.is_dir():
+            print(
+                "Warning: this package contains a shared/ directory. Split "
+                "plugins do not include shared files; add them to the server "
+                "manually if the plugin needs them.",
+                file=sys.stderr,
             )
 
         results.append((name, out))
@@ -476,7 +496,7 @@ def add_plugin(
         manifest = {
             "name": name,
             "display_name": name,
-            "version": version or "1.0.0",
+            "version": version or _detect_version(plugin_type, name, files_root),
             "plugin_type": plugin_type,
             "created_at": _now(),
             "updated_at": _now(),
@@ -510,6 +530,15 @@ def add_plugin(
     except Exception:
         shutil.rmtree(pdir, ignore_errors=True)
         raise
+
+
+def _detect_version(plugin_type: str, name: str, files_root: Path) -> str:
+    """Best-effort plugin version detection, defaulting to ``1.0.0``."""
+    if plugin_type != "css":
+        return "1.0.0"
+    from cs2lm.deps import detect_plugin_version
+
+    return detect_plugin_version(files_root, name) or "1.0.0"
 
 
 def _detect_dependencies(plugin_type: str, files_root: Path) -> dict:

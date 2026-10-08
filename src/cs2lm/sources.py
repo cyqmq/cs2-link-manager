@@ -25,7 +25,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from cs2lm.config import load_config, save_config
-from cs2lm.versions import version_gt
+from cs2lm.versions import is_semver, version_gt
 
 INDEX_SCHEMA = 1
 CACHE_DIR = "state/source_cache"
@@ -195,15 +195,25 @@ def fetch_index(repo: str | Path, source: dict, timeout: int = 30) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def merge_sources(results: list[dict]) -> dict:
+def merge_sources(
+    results: list[dict],
+    api_version_range: tuple[int, int] | None = None,
+) -> dict:
     """Merge per-source index results into one plugin table.
 
     ``results`` is a list of ``{"url", "index"?}`` dicts in source priority
     order (earlier = higher priority).  For every plugin id the entry with
     the highest ``version`` wins; on equal versions the earlier source is
-    kept.  Returns ``{plugin_id: entry}`` where ``entry`` is the selected
-    index entry plus ``source`` (URL) and ``source_index``.
+    kept.  Entries are skipped (with a warning appended to the source's
+    ``warnings`` list) when they are not SemVer, lack a ``sha256``, are
+    ``yanked``, or declare an ``api_version`` outside ``api_version_range``.
+    Relative ``download_url`` values are resolved against the source URL.
+
+    Returns ``{plugin_id: entry}`` where ``entry`` is the selected index
+    entry plus ``source`` (URL) and ``source_index``.
     """
+    from urllib.parse import urljoin
+
     merged: dict[str, dict] = {}
     for i, result in enumerate(results):
         index = result.get("index")
@@ -212,18 +222,49 @@ def merge_sources(results: list[dict]) -> dict:
         plugins = index.get("plugins")
         if not isinstance(plugins, dict):
             continue
+        warnings = result.setdefault("warnings", [])
+        base_url = result.get("url") or ""
         for plugin_id, info in plugins.items():
             if not isinstance(info, dict):
                 continue
             version = str(info.get("version") or "").strip()
-            if not version:
+            if not is_semver(version):
+                warnings.append(
+                    f"{plugin_id}: non-SemVer version {version!r}, skipped"
+                )
                 continue
+            if info.get("yanked"):
+                warnings.append(
+                    f"{plugin_id} {version}: yanked, skipped"
+                )
+                continue
+            sha256 = str(info.get("sha256") or "").strip()
+            if len(sha256) != 64 or any(c not in "0123456789abcdefABCDEF" for c in sha256):
+                warnings.append(
+                    f"{plugin_id} {version}: missing/invalid sha256, skipped"
+                )
+                continue
+            api_version = info.get("api_version")
+            if api_version_range is not None and api_version is not None:
+                try:
+                    if not (api_version_range[0] <= int(api_version) <= api_version_range[1]):
+                        warnings.append(
+                            f"{plugin_id} {version}: api_version {api_version} "
+                            f"not in {api_version_range[0]}-{api_version_range[1]}, skipped"
+                        )
+                        continue
+                except (TypeError, ValueError):
+                    warnings.append(
+                        f"{plugin_id} {version}: non-integer api_version {api_version!r}, skipped"
+                    )
+                    continue
             current = merged.get(plugin_id)
             if current is None or version_gt(version, str(current.get("version"))):
                 entry = dict(info)
                 entry["id"] = plugin_id
                 entry["version"] = version
-                entry["source"] = result.get("url")
+                entry["download_url"] = urljoin(base_url, str(info.get("download_url") or ""))
+                entry["source"] = base_url
                 entry["source_index"] = i
                 merged[plugin_id] = entry
             # equal version -> keep the earlier source (do nothing)
@@ -254,13 +295,14 @@ def fetch_and_merge(
     repo: str | Path,
     sources: list[dict],
     timeout: int = 30,
+    api_version_range: tuple[int, int] | None = None,
 ) -> tuple[dict, list[dict]]:
     """Fetch every source, merge the indexes, and cache the merged table.
 
     Returns ``(merged_plugins, results)`` where ``results`` records each
-    source's status (``url``, ``index``, ``error``).  If every source fails
-    but a cached merged table exists, that table is returned so the user can
-    still see what the last successful merge looked like.
+    source's status (``url``, ``index``, ``error``, ``warnings``).  If every
+    source fails but a cached merged table exists, that table is returned so
+    the user can still see what the last successful merge looked like.
     """
     results: list[dict] = []
     for source in sources:
@@ -272,7 +314,7 @@ def fetch_and_merge(
                 {"url": source["url"], "index": None, "error": str(exc)}
             )
 
-    merged = merge_sources(results)
+    merged = merge_sources(results, api_version_range=api_version_range)
     if not merged and not any(r.get("index") for r in results):
         cached = load_cached_merged(repo)
         if cached:

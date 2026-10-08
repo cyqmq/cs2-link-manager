@@ -18,6 +18,7 @@ def default_config(repo_path: str | Path, server_path: str | Path, csgo_rel: str
         "update": {
             "timeout": 30,
             "auto_remove_orphans": False,
+            "api_version_range": None,
         },
     }
 

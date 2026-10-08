@@ -20,10 +20,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   removed with `--remove-orphans`, and every action is appended to
   `state/update_log.json`. Requires supports version ranges
   (`{"DepLib": ">=1.0.0"}`) and dependencies are installed first.
+- **stricter index validation**: merge skips (with warnings) entries that
+  are non-SemVer, missing/invalid `sha256`, `yanked: true`, or whose
+  `api_version` falls outside the configured `update.api_version_range`;
+  relative `download_url` values are resolved against the source URL.
 - **index spec**: `docs/INDEX.md` defines the `index.json` schema (v1):
   top-level `schema`/`name`/`generated_at`/`plugins`, per-plugin entries
   (`id`/`version`/`download_url`/`sha256`/`api_version`/`requires`/...),
   merge semantics, version rules, and extension/compatibility conventions.
+- **package format spec**: `docs/format.md` documents the `.cs2pkg`
+  structure, `cs2pkg.json` fields, multi-plugin `plugins` semantics,
+  `requires`, version detection, and its relationship to `index.json`.
+- **version auto-detection**: `cs2lm add` reads `<Name>.deps.json` target
+  entries (`<AssemblyName>/<version>`, e.g. `Retakes/3.1.1`) and uses the
+  detected version instead of defaulting to `1.0.0`; the version survives
+  `pack` round trips.
+- **shared/ support**: single-plugin CSS packages that ship a `shared/`
+  tree now get it linked to the server; splitting a multi-plugin package
+  reports a warning instead of silently dropping `shared/`.
 - **package identity validation**: install/update verifies the zip's
   `manifest.json` `id` and `version` match the index entry before applying.
 - **multi-plugin packages**: packages containing several plugin directories
@@ -89,6 +103,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **split multi-plugin packages**: `split_css_plugins` no longer assumes a
+  `configs/` directory exists. Packages that only ship `plugins/` +
+  `shared/` (e.g. the official CS2-SimpleAdmin release) now split without
+  crashing (`[WinError 3]` on a missing `configs/` path is gone).
 - **doctor**: Metamod binary detection now uses the real CS2 paths
   (`bin/linuxsteamrt64/metamod.2.cs2.so` and
   `bin/win64/metamod.2.cs2.dll`) instead of generic `linux64/metamod.so` /

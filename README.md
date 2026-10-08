@@ -287,7 +287,8 @@ API 版本直接从
 
 ## `.cs2pkg` 插件包格式
 
-`.cs2pkg` 是一个 zip 归档，用于标准化插件分发：
+`.cs2pkg` 是一个 zip 归档，用于标准化插件分发（完整格式规范见
+`docs/format.md`）：
 
 * `cs2pkg.json` — 包元数据（name、version、plugin_type、ini_lines，以及可选的
   author/description/license/homepage/repository/dependencies/plugins）；
@@ -362,6 +363,10 @@ cs2lm pack MyPlugin --out ./releases/
 `cs2lm add Renamed ./DemoPlugin/`），工具也会把插件目录统一重命名为
 `Renamed`，保证安装/卸载/profile 切换不会错乱。
 
+**关于版本号**：`add` 会尝试从 `<Name>.deps.json` 的 `targets` 里自动提取
+`<Name>/<version>` 作为默认版本（例如 cs2-retakes 的 `Retakes/3.1.1`），
+提取不到才回退 `1.0.0`；`pack` 时该版本原样写回 `cs2pkg.json`。
+
 **多插件包支持拆分**：如果包里 `plugins/` 下有多个插件目录（例如 SimpleAdmin
 的 Release 包含主插件 + FunCommands + StealthModule 三个插件目录），
 `cs2lm` 默认会报错并列出目录。此时可以用 `--plugins` 显式声明插件目录名，
@@ -381,6 +386,8 @@ cs2lm add --pkg ./SimpleAdmin.cs2pkg
 
 拆分会按插件名切分各自的 `plugins/<Name>`、`configs/plugins/<Name>`、
 `lang/<Name>`、`gamedata/<Name>` 等目录，每个插件独立安装/卸载/更新。
+若包里含 `shared/` 目录，工具会打印警告并**不**把它复制进拆分结果
+（多个拆分插件安装同一 `shared/` 路径会产生链接冲突）。
 注册表条目也可以用 `--plugins` 声明多插件包：
 
 ```bash
@@ -451,15 +458,20 @@ cs2lm update --remove-orphans
 1. 依次拉取每个源的 `index.json`（带 **ETag 缓存**；单源失败跳过，不影响
    其他源；网络挂了用上次缓存兜底）；
 2. 按**多源合并规则**得到「每个插件的最高版本 + 下载地址」：每个插件独立
-   取最高版本，版本相同时越靠前的源越优先；
+   取最高版本，版本相同时越靠前的源越优先；非 SemVer、缺 `sha256`、
+   `yanked: true`、或 `api_version` 不在支持范围内的条目会被跳过并警告；
 3. 扫描本地 manifest，对比版本：本地没有 → **安装**；本地版本低 → **更新**；
    本地相同或更高 → **跳过**；
-4. 安装 / 更新时下载 zip → 校验 `sha256`（若索引里有）→ 解压 → 校验包内
-   `manifest.json` 的 `id` / `version` 与索引一致 → **原子替换**插件目录
-   （`.<name>.new` → 旧目录改 `.<name>.old` → 新目录就位 → 删 `.old`）；
+4. 安装 / 更新时下载 zip → 校验 `sha256`（索引必填，缺失则跳过）→ 解压 →
+   校验包内 `manifest.json` 的 `id` / `version` 与索引一致 → **原子替换**
+   插件目录（`.<name>.new` → 旧目录改 `.<name>.old` → 新目录就位 → 删 `.old`）；
 5. 已安装的插件更新后自动重装链接；每次操作写入 `state/update_log.json`。
 
 `--dry-run` 只报告计划，不修改任何文件。
+
+**api_version 兼容过滤**：在 `config.json` 的 `update.api_version_range` 里
+配置客户端支持的 API 版本闭区间（如 `[1, 2]`），合并时自动跳过范围外的条目；
+不配置则接受所有版本。
 
 ## 插件依赖管理（requires）
 

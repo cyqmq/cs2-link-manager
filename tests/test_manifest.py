@@ -238,3 +238,111 @@ def test_add_split_creates_separate_repo_entries(repo_server, tmp_path):
         for other in ("SimpleAdmin", "FunCommands", "StealthModule"):
             if other != name:
                 assert not any(f"plugins/{other}/" in s for s in sources)
+
+
+def _make_package_without_configs(tmp_path: Path, names: list[str]) -> Path:
+    """Build a multi-plugin CSS package with plugins/ + shared/ only."""
+    pkg = tmp_path / "NoConfigsPkg"
+    for name in names:
+        dirname = pkg / "addons" / "counterstrikesharp" / "plugins" / name
+        dirname.mkdir(parents=True)
+        (dirname / f"{name}.dll").write_bytes(b"MZ")
+    shared = pkg / "addons" / "counterstrikesharp" / "shared" / "CS2-SimpleAdminApi"
+    shared.mkdir(parents=True)
+    (shared / "CS2-SimpleAdminApi.dll").write_bytes(b"MZ")
+    return pkg
+
+
+def test_split_css_plugins_without_configs(tmp_path, capsys):
+    """Splitting a package with no configs/ (e.g. SimpleAdmin) must not crash.
+
+    Regression test: split_css_plugins previously assumed ``configs/``
+    exists and raised WinError 3 on packages that only ship ``plugins/`` and
+    ``shared/``.
+    """
+    from cs2lm.manifest import split_css_plugins
+
+    pkg = _make_package_without_configs(tmp_path, ["SimpleAdmin", "FunCommands"])
+    base = tmp_path / "split"
+    base.mkdir()
+    results = split_css_plugins(pkg, ["SimpleAdmin", "FunCommands"], base)
+    assert [n for n, _ in results] == ["SimpleAdmin", "FunCommands"]
+    for name, src in results:
+        assert (src / "addons" / "counterstrikesharp" / "plugins" / name).is_dir()
+        # No configs tree is created when the source has none.
+        assert not (src / "addons" / "counterstrikesharp" / "configs").exists()
+    # The shared/ directory is reported, not silently dropped.
+    assert "shared/" in capsys.readouterr().err
+
+
+def test_collect_css_links_includes_shared(repo_server, tmp_path):
+    """A CSS package shipping a shared/ tree links it to the server."""
+    repo, _server = repo_server
+    pkg = _make_package_without_configs(tmp_path, ["SimpleAdmin"])
+    manifest = add_plugin(repo, "SimpleAdmin", pkg)
+    shared_links = [
+        link for link in manifest["links"]
+        if "shared/CS2-SimpleAdminApi" in link["source"]
+    ]
+    assert shared_links
+    assert any(
+        link["target"].endswith(
+            "addons/counterstrikesharp/shared/CS2-SimpleAdminApi"
+        )
+        for link in shared_links
+    )
+
+
+def _write_deps_with_version(pkg: Path, name: str, version: str) -> None:
+    """Write a realistic .deps.json declaring the plugin assembly version."""
+    import json
+
+    deps = pkg / "addons" / "counterstrikesharp" / "plugins" / name / f"{name}.deps.json"
+    deps.write_text(
+        json.dumps(
+            {
+                "runtimeTarget": {"name": ".NETCoreApp,Version=v8.0"},
+                "targets": {
+                    ".NETCoreApp,Version=v8.0": {
+                        f"{name}/{version}": {
+                            "dependencies": {"CounterStrikeSharp.API": "1.0.376"},
+                            "runtime": {f"{name}.dll": {}},
+                        }
+                    }
+                },
+                "libraries": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_add_plugin_detects_version_from_deps_json(repo_server, tmp_path):
+    """``add`` extracts the plugin version from its .deps.json targets."""
+    repo, _server = repo_server
+    pkg = make_css_package(tmp_path, "Retakes")
+    _write_deps_with_version(pkg, "Retakes", "3.1.1")
+    manifest = add_plugin(repo, "Retakes", pkg)
+    assert manifest["version"] == "3.1.1"
+
+
+def test_add_plugin_version_override_wins(repo_server, tmp_path):
+    """An explicit --version argument beats .deps.json detection."""
+    repo, _server = repo_server
+    pkg = make_css_package(tmp_path, "Retakes")
+    _write_deps_with_version(pkg, "Retakes", "3.1.1")
+    manifest = add_plugin(repo, "Retakes", pkg, version="9.9.9")
+    assert manifest["version"] == "9.9.9"
+
+
+def test_pack_preserves_detected_version(repo_server, tmp_path):
+    """The detected version survives the pack round trip."""
+    from cs2lm.cs2pkg import build_pkg, load_pkg_meta
+
+    repo, _server = repo_server
+    pkg = make_css_package(tmp_path, "Retakes")
+    _write_deps_with_version(pkg, "Retakes", "3.1.1")
+    add_plugin(repo, "Retakes", pkg)
+
+    pkg_path = build_pkg(repo, "Retakes", tmp_path / "dist")
+    assert load_pkg_meta(pkg_path)["version"] == "3.1.1"

@@ -104,3 +104,24 @@ def version_satisfies(version: str, requirement: str) -> bool:
                 return version_lt(version, target)
             return version_eq(version, target)
     return version_eq(version, req)
+
+
+def is_semver(value: str) -> bool:
+    """Return whether ``value`` looks like a SemVer 2.0 version string.
+
+    Accepts ``MAJOR.MINOR.PATCH`` (with optional prerelease/build metadata).
+    Non-numeric identifiers such as ``"latest"`` or ``"v1.2"`` are
+    rejected so the merge step can skip them with a warning.
+    """
+    text = str(value).strip()
+    if not text:
+        return False
+    if "+" in text:  # drop build metadata
+        text = text.split("+", 1)[0]
+    core = text.split("-", 1)[0]  # drop prerelease
+    if not core:
+        return False
+    parts = core.split(".")
+    if not all(part.isdigit() for part in parts):
+        return False
+    return all(0 <= int(part) <= 2**63 - 1 for part in parts)

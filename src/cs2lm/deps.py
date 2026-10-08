@@ -297,3 +297,37 @@ def read_api_dependency(files_root: str | Path) -> str | None:
             if isinstance(key, str) and key.startswith(CSS_API_ASSEMBLY + "/"):
                 return key.split("/", 1)[1]
     return None
+
+
+def detect_plugin_version(files_root: str | Path, plugin_name: str) -> str | None:
+    """Detect a plugin's version from its ``.deps.json`` target entries.
+
+    CounterStrikeSharp packages declare the plugin assembly in the deps.json
+    ``targets`` map as ``<AssemblyName>/<version>`` (for example
+    ``Retakes/3.1.1``).  The assembly name is matched against ``plugin_name``
+    and the basenames of every DLL under ``files_root``; the first matching
+    version is returned, or ``None`` when nothing can be detected.
+    """
+    root = Path(files_root)
+    if not root.is_dir():
+        return None
+    dll_basenames = {p.stem.lower() for p in root.rglob("*.dll")}
+    candidates = {plugin_name.strip().lower()} | dll_basenames
+    for deps_file in sorted(root.rglob("*.deps.json")):
+        try:
+            data = json.loads(deps_file.read_text(encoding="utf-8-sig"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        targets = data.get("targets", {})
+        if not isinstance(targets, dict):
+            continue
+        for runtime in targets.values():
+            if not isinstance(runtime, dict):
+                continue
+            for key in runtime:
+                if "/" not in key:
+                    continue
+                assembly, _, version = key.rpartition("/")
+                if assembly.lower() in candidates and version:
+                    return version
+    return None
