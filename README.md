@@ -87,6 +87,7 @@ cs2lm profile use competitive
 | `registry add <name> <url> [--description] [--type] [--addons-subdir]` | 往本地注册表添加一个插件源（URL）。 |
 | `registry list` / `registry remove <name>` | 列出 / 删除注册表条目。 |
 | `search <query>` | 在本地注册表里搜索插件（名称/描述/URL）。 |
+| `update [name...] [--yes]` | 从注册表 URL 下载新包，按 SHA-256 比对并更新仓库文件；插件已安装时自动重装刷新链接。默认更新注册表里所有已在仓库的插件，可指定名称；`--yes` 跳过确认。 |
 | `profile create <name> [plugins...]` | 创建命名 profile。 |
 | `profile use <name>` | 启用 profile 内插件、禁用其余插件，并打印差异报告。 |
 | `profile list` / `profile delete <name>` | 列出 / 删除 profile。 |
@@ -376,6 +377,33 @@ cs2lm install MatchZy --from-registry
 注册表是纯 JSON，社区可以共享：把 `registry.json` 分发出去，别人直接
 `cs2lm registry add` 导入即可。awesome-cs2 等仓库的 manifest 列表可以转换
 成这种格式。
+
+### 更新插件（update）
+
+```bash
+# 更新所有注册表里已在仓库的插件
+cs2lm update
+
+# 只更新指定插件
+cs2lm update MatchZy
+
+# 脚本场景跳过确认
+cs2lm update --yes
+```
+
+更新流程：
+
+1. 从注册表 URL 下载新包，解压并定位 `addons/` 树（同样支持
+   `--addons-subdir` 语义，注册表条目里记录的 `addons_subdir` 会被使用）；
+2. 对新包逐文件计算 **SHA-256**，与 manifest 里记录的旧校验和比对；
+3. 输出差异摘要：`0 added, 0 removed, 1 changed`（文件级），确认后应用；
+4. 替换仓库 `files/`（只删除旧 manifest 里登记过的文件，绝不碰无关文件），
+   重新生成 manifest（保留作者/许可证等元数据，新包 `cs2pkg.json` 里的
+   会覆盖）；
+5. 如果插件之前已安装，自动卸载旧链接并按新 manifest 重装，服务器即刻
+   生效。
+
+`--dry-run` 只报告差异不修改任何文件。
 
 ## 接管已有插件（adopt）
 

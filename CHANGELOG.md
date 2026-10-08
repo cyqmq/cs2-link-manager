@@ -33,8 +33,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **local registry**: `registry add/list/remove`, `search`, and
   `install --from-registry` provide a one-command plugin install workflow
   from a plain JSON registry (`registry.json`).
-- **README**: documents the registry, URL subdirs, package metadata and
-  multi-plugin rejection.
+- **update mechanism**: `cs2lm update [name...]` downloads each plugin's
+  registry URL, compares SHA-256 checksums against the current manifest,
+  shows a file-level diff, replaces repo files (only files recorded in the
+  old manifest are touched), regenerates the manifest, and re-installs the
+  plugin if it was installed. `--yes` skips confirmation; `--dry-run`
+  reports without changing anything.
+- **README**: documents the registry, URL subdirs, package metadata,
+  multi-plugin rejection, and the update workflow.
 
 ### Changed
 

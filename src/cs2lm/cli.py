@@ -150,6 +150,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_search = sub.add_parser("search", help="Search the local plugin registry")
     p_search.add_argument("query", nargs="?", default="", help="Search text (name/description/url)")
 
+    p_update = sub.add_parser("update", help="Update plugins from the local registry")
+    p_update.add_argument("names", nargs="*", help="Plugin names to update (default: all registry entries in the repo)")
+    p_update.add_argument("--yes", action="store_true", help="Apply updates without confirmation")
+
     return parser
 
 
@@ -490,6 +494,54 @@ def cmd_search(args: argparse.Namespace, logger: Logger) -> int:
     return 0
 
 
+def cmd_update(args: argparse.Namespace, logger: Logger) -> int:
+    from cs2lm.registry import load_registry
+    from cs2lm.updater import update_plugin
+
+    registry = load_registry(args.repo)
+    if not registry:
+        print("Registry is empty. Add entries with 'cs2lm registry add <name> <url>'.")
+        return 0
+
+    names = args.names or sorted(registry.keys())
+    results = []
+    for name in names:
+        entry = registry.get(name)
+        if not entry:
+            print(f"Skipping {name}: no registry entry.")
+            continue
+        result = update_plugin(
+            args.repo,
+            name,
+            entry,
+            dry_run=args.dry_run,
+            yes=args.yes,
+            logger=logger,
+        )
+        results.append(result)
+        status = result["status"]
+        if status == "up-to-date":
+            print(f"{name}: already up to date.")
+        elif status == "not-in-repo":
+            print(f"{name}: {result['message']}")
+        elif status == "aborted":
+            print(f"{name}: update aborted.")
+        elif status == "changed":
+            print(
+                f"{name}: {result['old_version']} -> {result['new_version']} "
+                f"({len(result['added'])} added, {len(result['removed'])} removed, "
+                f"{len(result['changed'])} changed"
+                f"{', dry-run' if result.get('dry_run') else ''})."
+            )
+        elif status == "error":
+            print(f"{name}: update failed: {result['message']}")
+        else:  # pragma: no cover
+            print(f"{name}: unknown update status {status!r}.")
+
+    errors = [r for r in results if r["status"] == "error"]
+    return 1 if errors else 0
+
+
 def cmd_profile(args: argparse.Namespace, logger: Logger) -> int:
     command = args.profile_command
     if command == "list":
@@ -536,6 +588,7 @@ HANDLERS = {
     "profile": cmd_profile,
     "registry": cmd_registry,
     "search": cmd_search,
+    "update": cmd_update,
     "web": cmd_web,
 }
 
