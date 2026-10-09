@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **embedded default source**: `cs2lm init` now includes the community port
+  hub `https://github.com/cyqmq/cs2pkg-port` as a pre-configured source
+  (removable like any other; `source clear` is respected and the default is
+  never re-injected). Old repositories with an empty source list get it added
+  once via a one-time migration. `source add` also accepts GitHub repository
+  page URLs and resolves them to their raw `index.json`.
 - **multi-plugin packaging**: `cs2lm pack Alpha Beta --out dir` exports several
   repository plugins as one multi-plugin `.cs2pkg` (`plugins` list in
   `cs2pkg.json`); `add --pkg` splits it back into separate entries. Mixed

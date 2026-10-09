@@ -11,7 +11,8 @@ from pathlib import Path
 
 import pytest
 
-from cs2lm.config import load_config
+from cs2lm import cli
+from cs2lm.config import DEFAULT_SOURCES, default_config, load_config, save_config
 from cs2lm.sources import (
     SourceError,
     add_source,
@@ -20,6 +21,7 @@ from cs2lm.sources import (
     get_sources,
     list_sources,
     merge_sources,
+    normalize_source_url,
     remove_source,
 )
 
@@ -61,6 +63,108 @@ def test_add_remove_list_sources(repo_server):
     assert [s["url"] for s in list_sources(repo)] == ["https://b.example/index.json"]
     with pytest.raises(ValueError, match="not configured"):
         remove_source(repo, "https://a.example/index.json")
+
+
+def test_init_has_default_source(tmp_path, repo_server):
+    """cli init embeds the default source; source clear removes it for good."""
+    _repo, _server = repo_server
+    repo = tmp_path / "real-init"
+    server = tmp_path / "server"
+    for d in ("plugins", "profiles", "state"):
+        (repo / d).mkdir(parents=True, exist_ok=True)
+    assert cli.main(
+        ["--repo", str(repo), "init", "--server", str(server)]
+    ) == 0
+    sources = list_sources(repo)
+    assert [s["url"] for s in sources] == [DEFAULT_SOURCES[0]["url"]]
+
+    # Users can remove the default source like any other.
+    assert cli.main(["--repo", str(repo), "source", "remove", DEFAULT_SOURCES[0]["url"]]) == 0
+    assert list_sources(repo) == []
+
+
+def test_source_clear_removes_default_and_not_readded(tmp_path):
+    """source clear empties the list; the default is NOT re-injected on load."""
+    repo = tmp_path / "clear-repo"
+    for d in ("plugins", "profiles", "state"):
+        (repo / d).mkdir(parents=True, exist_ok=True)
+    assert cli.main(
+        ["--repo", str(repo), "init", "--server", str(tmp_path / "srv")]
+    ) == 0
+    assert [s["url"] for s in list_sources(repo)] == [DEFAULT_SOURCES[0]["url"]]
+    assert cli.main(["--repo", str(repo), "source", "clear"]) == 0
+    assert list_sources(repo) == []
+    # Loading the config again must not re-add the default source.
+    cfg = load_config(repo)
+    assert get_sources(cfg) == []
+    assert cfg.get("default_sources_applied") is True
+
+
+def test_migration_adds_default_to_old_empty_repo(tmp_path):
+    """A pre-default repo with no sources gets the default source once."""
+    from conftest import init_repo
+
+    repo = init_repo(tmp_path, repo_name="old-empty")
+    # Simulate an old config: no sources, no marker.
+    cfg = load_config(repo)
+    cfg["sources"] = []
+    cfg.pop("default_sources_applied", None)
+    save_config(repo, cfg)
+
+    cfg2 = load_config(repo)
+    assert [s["url"] for s in get_sources(cfg2)] == [DEFAULT_SOURCES[0]["url"]]
+    assert cfg2.get("default_sources_applied") is True
+
+
+def test_migration_preserves_custom_sources(tmp_path):
+    """A repo with custom sources keeps them; the default is not injected."""
+    from conftest import init_repo
+
+    repo = init_repo(tmp_path, repo_name="old-custom")
+    cfg = load_config(repo)
+    cfg["sources"] = [{"url": "https://custom.example/index.json"}]
+    cfg.pop("default_sources_applied", None)
+    save_config(repo, cfg)
+
+    cfg2 = load_config(repo)
+    assert [s["url"] for s in get_sources(cfg2)] == [
+        "https://custom.example/index.json"
+    ]
+    assert cfg2.get("default_sources_applied") is True
+
+
+def test_normalize_source_url():
+    assert normalize_source_url("https://github.com/cyqmq/cs2pkg-port") == (
+        "https://raw.githubusercontent.com/cyqmq/cs2pkg-port/main/index.json"
+    )
+    assert normalize_source_url("https://github.com/cyqmq/cs2pkg-port.git") == (
+        "https://raw.githubusercontent.com/cyqmq/cs2pkg-port/main/index.json"
+    )
+    assert normalize_source_url(
+        "https://github.com/cyqmq/cs2pkg-port/tree/dev"
+    ) == "https://raw.githubusercontent.com/cyqmq/cs2pkg-port/dev/index.json"
+    assert normalize_source_url("https://example.com/index.json") == (
+        "https://example.com/index.json"
+    )
+
+
+def test_add_remove_source_dedup_by_normalized_url(repo_server):
+    """GitHub page, .git suffix and raw index URL are the same source."""
+    repo, _server = repo_server
+    add_source(repo, "https://github.com/owner/repo")
+    with pytest.raises(ValueError, match="already configured"):
+        add_source(repo, "https://github.com/owner/repo.git")
+    with pytest.raises(ValueError, match="already configured"):
+        add_source(
+            repo, "https://raw.githubusercontent.com/owner/repo/main/index.json"
+        )
+    assert [s["url"] for s in list_sources(repo)] == [
+        "https://github.com/owner/repo"
+    ]
+
+    # Removal also matches across the normalized forms.
+    remove_source(repo, "https://github.com/owner/repo.git")
+    assert list_sources(repo) == []
 
 
 # ---------------------------------------------------------------------------

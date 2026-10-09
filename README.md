@@ -537,9 +537,21 @@ cs2lm install MatchZy --from-registry
 `index.json`，里面记录该源里每个插件的最高版本和下载地址（完整规范见
 `docs/INDEX.md`）。
 
+新建仓库（`cs2lm init`）会**内嵌默认源**
+`https://github.com/cyqmq/cs2pkg-port`（社区端口包集合），开箱即用；
+它和普通源一样可 `source remove` / `source clear` 移除，清空后不会被重新
+注入。老仓库（`sources` 为空且无标记）首次加载会自动补上默认源一次；
+已有自定义源的仓库保持不动。
+
+`source add` 也支持直接粘贴 GitHub 仓库页 URL（如
+`https://github.com/owner/repo`），会自动解析成
+`raw.githubusercontent.com/<owner>/<repo>/<branch>/index.json`（默认
+`main`，也可用 `.../tree/<branch>` 指定分支），方便把仓库当源用。
+
 ```bash
-# 添加插件源（可以是 http/https/file 直链）
+# 添加插件源（可以是 http/https/file 直链，或 GitHub 仓库页）
 cs2lm source add https://example.com/index.json
+cs2lm source add https://github.com/owner/plugin-repo
 
 # 私有源带鉴权 header
 cs2lm source add https://example.com/private/index.json \

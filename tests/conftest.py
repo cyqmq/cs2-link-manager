@@ -62,7 +62,12 @@ def init_repo(tmp_path: Path, repo_name: str = "repo", server: Path | None = Non
     for d in ("plugins", "profiles", "state"):
         (repo / d).mkdir(parents=True, exist_ok=True)
     server = server or make_server(tmp_path)
-    save_config(repo, default_config(repo, server, "game/csgo"))
+    cfg = default_config(repo, server, "game/csgo")
+    # Tests run offline: the embedded default source is cleared and marked as
+    # applied so it is never re-injected by load_config's migration.
+    cfg["sources"] = []
+    cfg["default_sources_applied"] = True
+    save_config(repo, cfg)
     return repo
 
 

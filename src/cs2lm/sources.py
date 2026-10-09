@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
@@ -30,6 +31,29 @@ from cs2lm.versions import is_semver, version_gt
 INDEX_SCHEMA = 1
 CACHE_DIR = "state/source_cache"
 MERGED_CACHE = "state/merged_index.json"
+
+
+def normalize_source_url(url: str) -> str:
+    """Resolve a GitHub repository page to its raw ``index.json`` URL.
+
+    ``https://github.com/<owner>/<repo>`` (with optional trailing slash,
+    ``.git`` suffix or ``tree/<branch>``) is rewritten to
+    ``https://raw.githubusercontent.com/<owner>/<repo>/<branch>/index.json``
+    (default branch ``main``). Everything else is returned unchanged.
+    """
+    url = url.strip()
+    m = re.match(
+        r"^https?://github\.com/([^/]+)/([^/]+?)(?:\.git)?"
+        r"(?:/tree/([^/]+))?/?$",
+        url,
+    )
+    if m:
+        owner, repo, branch = m.group(1), m.group(2), m.group(3)
+        branch = branch or "main"
+        return (
+            f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/index.json"
+        )
+    return url
 
 
 class SourceError(Exception):
@@ -72,8 +96,9 @@ def add_source(
     url = url.strip()
     if not url:
         raise ValueError("Source URL cannot be empty")
+    norm = normalize_source_url(url)
     sources = get_sources(load_config(repo))
-    if any(s["url"] == url for s in sources):
+    if any(normalize_source_url(s["url"]) == norm for s in sources):
         raise ValueError(f"Source already configured: {url}")
     entry: dict = {"url": url, "headers": dict(headers or {})}
     if name:
@@ -85,8 +110,9 @@ def add_source(
 
 def remove_source(repo: str | Path, url: str) -> list[dict]:
     """Remove a source URL from the list. Returns the updated list."""
+    norm = normalize_source_url(url)
     sources = get_sources(load_config(repo))
-    remaining = [s for s in sources if s["url"] != url.strip()]
+    remaining = [s for s in sources if normalize_source_url(s["url"]) != norm]
     if len(remaining) == len(sources):
         raise ValueError(f"Source not configured: {url}")
     _save_sources(repo, remaining)
@@ -134,12 +160,14 @@ def _validate_index_schema(index: dict) -> None:
 def fetch_index(repo: str | Path, source: dict, timeout: int = 30) -> dict:
     """Fetch and validate one source's ``index.json``.
 
-    Uses ETag / If-Modified-Since caching.  When the network fails but a
-    previously fetched copy exists in ``state/source_cache``, the cached
-    index is returned (offline fallback).  Raises :class:`SourceError` on
-    HTTP/network errors with no cache and on schema violations.
+    GitHub repository pages (``https://github.com/owner/repo``) are resolved
+    to their raw ``index.json`` before the request.  Uses ETag /
+    If-Modified-Since caching.  When the network fails but a previously
+    fetched copy exists in ``state/source_cache``, the cached index is
+    returned (offline fallback).  Raises :class:`SourceError` on HTTP/network
+    errors with no cache and on schema violations.
     """
-    url = source["url"]
+    url = normalize_source_url(source["url"])
     headers = dict(source.get("headers") or {})
     cache_file = _source_cache_path(repo, url)
     cached: dict | None = None
