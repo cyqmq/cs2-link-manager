@@ -313,3 +313,114 @@ def test_cli_registry_multi_plugin(repo_server, tmp_path):
     assert set(list_plugins(repo)) == {"SimpleAdmin", "FunCommands", "StealthModule"}
     installed = {p["name"] for p in PluginManager(repo).list_plugins() if p["installed"]}
     assert "SimpleAdmin" in installed
+
+
+# ---------------------------------------------------------------------------
+# Bug 1: add/pack accept options placed between positional arguments
+# ---------------------------------------------------------------------------
+
+
+def test_add_intermixed_options(repo_server, tmp_path, capsys):
+    """Options between `add <name>` and <path> are accepted (Bug 1)."""
+    from cs2lm.manifest import list_plugins
+
+    repo, _server = repo_server
+    pkg = make_css_package(tmp_path, "FakedMM")
+    assert (
+        run(
+            [
+                "--repo",
+                str(repo),
+                "add",
+                "FakedMM",
+                "--type",
+                "css",
+                str(pkg),
+            ]
+        )
+        == 0
+    )
+    out = capsys.readouterr().out
+    assert "Added FakedMM" in out
+    assert "FakedMM" in list_plugins(repo)
+
+
+def test_add_intermixed_force_is_still_rejected(repo_server, tmp_path):
+    """`--force` is not an add option and must still fail cleanly (Bug 1)."""
+    repo, _server = repo_server
+    pkg = make_css_package(tmp_path, "ReproB")
+    with pytest.raises(SystemExit) as excinfo:
+        run(["--repo", str(repo), "add", "ReproB", "--force", str(pkg)])
+    assert excinfo.value.code == 2
+
+
+def test_pack_intermixed_options(repo_server, tmp_path):
+    """Options between `pack` plugin names are accepted (Bug 1 pattern)."""
+    repo, _server = repo_server
+    run(["--repo", str(repo), "add", "Alpha", str(make_css_package(tmp_path, "Alpha"))])
+    run(["--repo", str(repo), "add", "Beta", str(make_css_package(tmp_path, "Beta"))])
+    out_dir = tmp_path / "out"
+    assert (
+        run(
+            [
+                "--repo",
+                str(repo),
+                "pack",
+                "Alpha",
+                "--name",
+                "Combo",
+                "Beta",
+                "--out",
+                str(out_dir),
+            ]
+        )
+        == 0
+    )
+    assert (out_dir / "Combo.cs2pkg").exists()
+
+
+# ---------------------------------------------------------------------------
+# Issue 4: import resolves relative paths against the server root
+# ---------------------------------------------------------------------------
+
+
+def test_import_relative_path(repo_server):
+    """import treats the path as server-relative, not CWD-relative (Issue 4)."""
+    from cs2lm.manifest import list_plugins
+
+    repo, server = repo_server
+    plugin_dir = (
+        server
+        / "game"
+        / "csgo"
+        / "addons"
+        / "counterstrikesharp"
+        / "plugins"
+        / "ServPlugin"
+    )
+    plugin_dir.mkdir(parents=True, exist_ok=True)
+    (plugin_dir / "ServPlugin.dll").write_bytes(b"MZ")
+    (plugin_dir / "ServPlugin.deps.json").write_text("{}")
+    rel = plugin_dir.relative_to(server)
+    assert run(["--repo", str(repo), "import", "ServPlugin", rel.as_posix()]) == 0
+    assert "ServPlugin" in list_plugins(repo)
+
+
+# ---------------------------------------------------------------------------
+# Issue 6: re-running init updates the server path
+# ---------------------------------------------------------------------------
+
+
+def test_init_repeat_updates_server_path(tmp_path):
+    """Re-running init with a new --server updates config.json (Issue 6)."""
+    repo = tmp_path / "repo"
+    for d in ("plugins", "profiles", "state"):
+        (repo / d).mkdir(parents=True, exist_ok=True)
+    srv1 = tmp_path / "srv1"
+    srv2 = tmp_path / "srv2"
+    assert run(["--repo", str(repo), "init", "--server", str(srv1)]) == 0
+    cfg1 = json.loads((repo / "config.json").read_text(encoding="utf-8"))
+    assert cfg1["server_path"] == str(srv1.resolve())
+    assert run(["--repo", str(repo), "init", "--server", str(srv2)]) == 0
+    cfg2 = json.loads((repo / "config.json").read_text(encoding="utf-8"))
+    assert cfg2["server_path"] == str(srv2.resolve())

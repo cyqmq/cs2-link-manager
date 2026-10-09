@@ -80,8 +80,8 @@ cs2lm profile use competitive
 
 | 命令 | 说明 |
 | --- | --- |
-| `init --server <dir>` | 创建仓库骨架和 `config.json`。 |
-| `add <name> <path>` / `add <name> --url <zip-url> [--addons-subdir <dir>]` / `add [<name>] --pkg <file.cs2pkg>` | 把插件包（本地目录、下载的 zip 或 `.cs2pkg`）复制进仓库，生成 `manifest.json`；`--pkg` 省略名字时用 `cs2pkg.json` 的 `name`；`--addons-subdir` 指定 zip 内 `addons/` 树所在的子目录（如 `public`）；`--type css|metamod|swiftly|plugify|modsharp` 可跳过自动识别。传 `.cs2pkg` 路径给 `add <name> <path>` 会提示改用 `--pkg`；包内没有 `manifest.json`/`cs2pkg.json` 时版本默认 `1.0.0` 并打印警告（可用 `--version` 指定）；包看起来不像插件（无 addons/ 树或二进制）时也会警告。 |
+| `init --server <dir>` | 创建仓库骨架和 `config.json`；已初始化时重复执行会**更新 server 路径**（插件/源/profile 不动）。 |
+| `add <name> <path>` / `add <name> --url <zip-url> [--addons-subdir <dir>]` / `add [<name>] --pkg <file.cs2pkg>` | 把插件包（本地目录、下载的 zip 或 `.cs2pkg`）复制进仓库，生成 `manifest.json` 并打印 `Added <name> (<type> v<version>)`；`--pkg` 省略名字时用 `cs2pkg.json` 的 `name`；`--addons-subdir` 指定 zip 内 `addons/` 树所在的子目录（如 `public`）；`--type css|metamod|swiftly|plugify|modsharp` 可跳过自动识别。`--type`/`--version`/`--plugins` 等选项可以放在 `name` 与 `path` **之间**（如 `add Name --type css path`）。传 `.cs2pkg` 路径给 `add <name> <path>` 会提示改用 `--pkg`；包内没有 `manifest.json`/`cs2pkg.json` 时版本默认 `1.0.0` 并打印警告（可用 `--version` 指定）；包看起来不像插件（无 addons/ 树或二进制）时也会警告。 |
 | `pack <name> [<name> ...] [--name <label>] [--out <dir>]` | 把仓库插件打包成 `.cs2pkg` 文件；传多个名字（空格或逗号分隔）会打成**多插件包**。 |
 | `install <name|#N> [--from-registry] [--timeout <s>] [--force]` | 按 manifest 创建链接（幂等）；如果插件不在仓库里，自动回退到已配置的 `index.json` 源（或本地注册表）下载安装，并递归补装 `requires` 依赖；`#N` 直接引用 `search` 结果快照里的序号。安装前检测插件所属框架是否已装在服务器上，缺失则拒绝（`--force` 绕过）。 |
 | `uninstall <name>` | 删除工具创建的链接，保留仓库文件。 |
@@ -92,14 +92,14 @@ cs2lm profile use competitive
 | `registry add <name> <url> [--description] [--type] [--addons-subdir] [--sha256 <hex>] [--requires <names>]` | 往本地注册表添加一个插件源（URL）；`--sha256` 记录 zip 校验和，`--requires` 记录依赖插件（逗号分隔）。添加时会做一次 HEAD 可达性探测，不可达会打印警告但照常保存。 |
 | `registry list` / `registry remove <name>` | 列出 / 删除注册表条目。 |
 | `search [<query>] [--source <url>] [--timeout <s>]` | 合并所有已配置 `index.json` 源 + 本地注册表，输出带序号的目录（名称/版本/状态/来源/描述），并把结果快照写入 `state/search_result.json` 供 `install #N` 引用。状态区分「已装(版本)」（已链接到服务器）与「仓库(版本,未链接)」（仅存在于仓库，尚未启用）。 |
-| `update [name...] [--yes] [--force] [--remove-orphans] [--timeout <s>] [--self]` | 拉取配置的多个 `index.json` 源，只更新**本地已安装**的插件；缺失插件**不列出、绝不自动装**（避免大源刷屏）；`--force` 可绕过更新时的框架检测；`--remove-orphans` 把不在任何源里的插件移到仓库 trash；`--self` 尝试更新工具自身（git 检出时执行 `git pull`）。 |
+| `update [name...] [--yes] [--force] [--remove-orphans] [--timeout <s>] [--self] [--dry-run]` | 拉取配置的多个 `index.json` 源，只更新**本地已安装**的插件；缺失插件**不列出、绝不自动装**（避免大源刷屏）；`--force` 可绕过更新时的框架检测；`--remove-orphans` 把不在任何源里的插件移到仓库 trash；`--self` 尝试更新工具自身（git 检出时执行 `git pull`）。 |
 | `source add <index-url> [--name <n>] [--header "K: V"]...` | 添加一个 `index.json` 插件源（可带鉴权 header）；添加前会先抓取并校验 `index.json`（schema + plugins 对象），无效/不可达会拒绝添加。 |
 | `source list` / `source remove <index-url>` / `source clear` | 列出 / 删除 / 清空插件源。 |
 | `profile create <name> [plugins...]` | 创建命名 profile。 |
 | `profile use <name>` | 启用 profile 内插件、禁用其余插件，并打印差异报告。 |
 | `profile list` / `profile delete <name>` | 列出 / 删除 profile。 |
 | `doctor [--verbose]` | 检查服务器结构、断链、缺失目标、权限、冲突、CSS API 版本依赖；`--verbose` 额外输出各框架在服务器上的安装状态。 |
-| `import <name> <path-in-server>` | 把服务器上指定路径的单个插件反向导入仓库。 |
+| `import <name> <path-in-server>` | 把服务器上指定路径的单个插件反向导入仓库。路径是**相对服务器根目录**的（如 `game/csgo/addons/...`），绝对路径也支持。 |
 | `adopt [--plugin <name>]` | 扫描服务器上已有的 CSS 插件，批量导入仓库。 |
 | `web [--host H] [--port P] [--auth-token T] [--daemon] [--pidfile F] [--daemon-log F]` | 启动本地 Web 管理界面：状态卡显示服务器框架，支持目录搜索、一键安装/卸载、更新全部、插件启停；并暴露 JSON API（见「Web UI」）。`--port 0` 分配随机空闲端口并在启动行/`CS2LM_READY` 打印**实际**端口；`--daemon` 后台化，父进程会等待子进程真正监听成功才返回（失败返回非零并给出原因）。设置令牌后需要认证。 |
 
@@ -110,9 +110,11 @@ cs2lm profile use competitive
 ### `--dry-run`
 
 所有写命令都支持 `--dry-run`：只打印将要执行的动作，不改变任何内容。
+`--dry-run` 放在子命令**前面或后面**都可以：
 
 ```bash
 cs2lm --repo ./plugins-repo --dry-run install MyPlugin
+cs2lm --repo ./plugins-repo update MyPlugin --dry-run
 ```
 
 ### Profile 切换与差异报告

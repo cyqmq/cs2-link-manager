@@ -29,6 +29,10 @@ def import_plugin(
     cfg = load_config(repo)
     server = Path(cfg["server_path"]).resolve()
     raw_source = Path(source_path).expanduser()
+    # The CLI documents this argument as "path inside the server directory",
+    # so relative paths are resolved against the server root, not the CWD.
+    if not raw_source.is_absolute():
+        raw_source = server / raw_source
     source = raw_source.resolve()
 
     if not source.exists():

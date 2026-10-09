@@ -357,7 +357,11 @@ def install_plugin(
                     return {"name": name, "messages": messages, "status": "error"}
                 return {"name": name, "messages": messages, "status": "ok"}
 
-    if from_registry or (registry_entry is None and name not in list_plugins(repo)):
+    if (
+        from_registry
+        or registry_entry is not None
+        or name not in list_plugins(repo)
+    ):
         if registry_entry is None:
             registry_entry = load_registry(repo).get(name)
         if not registry_entry:

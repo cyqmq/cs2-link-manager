@@ -183,6 +183,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **add/pack options between positionals**: `cs2lm add Name --type css path`
+  and `cs2lm pack Alpha --name X Beta --out dir` now parse correctly (argv
+  is reordered so positionals come first). `--dry-run` after a subcommand is
+  also accepted, e.g. `cs2lm update --dry-run` (previously only the global
+  `cs2lm --dry-run update` form worked).
+- **install #N registry entries**: `install #N` from a search snapshot now
+  installs registry entries. Previously the snapshot's `registry_entry`
+  skipped the registry download branch, so it failed with "Plugin not found in
+  repository".
+- **import relative paths**: `cs2lm import <name> <path>` resolves relative
+  paths against the server root (matching `path-in-server`), not the CWD.
+- **add success output**: `cs2lm add` now prints
+  `Added <name> (<type> v<version>).` instead of being silent.
+- **re-init updates server path**: running `cs2lm init --server <new>` on an
+  existing repository updates `server_path`/`csgo_rel` without touching
+  plugins, sources, or profiles.
+- **--log missing directory**: `--log` no longer silently creates parent
+  directories; a missing or unwritable parent produces a friendly `error:`.
 - **install --force on the source path**: `--force` is forwarded through
   `install_from_index_with_deps()` / `install_plugin_from_index()`, so
   `install <name> --force` and `install #N --force` both bypass the

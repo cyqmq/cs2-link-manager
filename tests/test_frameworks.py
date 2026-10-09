@@ -420,6 +420,15 @@ def test_log_unwritable_path_friendly(repo_server, tmp_path):
     assert cli.main(["--repo", str(repo), "--log", str(log_path), "list"]) == 1
 
 
+def test_log_nonexistent_parent_friendly(repo_server, tmp_path, capsys):
+    """--log into a missing directory errors instead of silently creating it."""
+    repo, _server = repo_server
+    log_path = tmp_path / "no-such-dir" / "x.log"
+    assert cli.main(["--repo", str(repo), "--log", str(log_path), "list"]) == 1
+    captured = capsys.readouterr()
+    assert "does not exist" in (captured.out + captured.err)
+
+
 # ---------------------------------------------------------------------------
 # U5: registry add warns on unreachable URL (still succeeds)
 # ---------------------------------------------------------------------------

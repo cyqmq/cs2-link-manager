@@ -20,6 +20,107 @@ from cs2lm.paths import find_csgo_rel
 
 DEFAULT_REPO = os.environ.get("CS2LM_REPO", "plugins-repo")
 
+# Options defined on the top-level parser (may appear before or after the
+# subcommand).  Used by the argv normalizer below.
+_GLOBAL_VALUE_OPTIONS = {"--repo", "--log", "--log-format"}
+_GLOBAL_FLAGS = {"--version", "--dry-run", "--verbose", "--help", "-h"}
+
+# Subcommands whose positional arguments can be separated by options.  For
+# these, ``main`` reorders argv so every positional comes first, which lets
+# argparse handle ``add Name --type metamod /path`` naturally.
+_INTERMIXED_COMMANDS: dict[str, dict[str, set[str]]] = {
+    "add": {
+        "with_value": {
+            "--url",
+            "--pkg",
+            "--type",
+            "--version",
+            "--addons-subdir",
+            "--sha256",
+            "--plugins",
+        },
+        "flags": set(),
+    },
+    "pack": {
+        "with_value": {"--name", "--out"},
+        "flags": set(),
+    },
+}
+
+
+def _find_subcommand(argv: list[str]) -> tuple[str | None, int]:
+    """Return ``(command, index)`` of the first subcommand token in argv."""
+    i = 0
+    while i < len(argv):
+        tok = argv[i]
+        if tok == "--":
+            return None, 0
+        if tok in _GLOBAL_VALUE_OPTIONS:
+            i += 2
+        elif tok in _GLOBAL_FLAGS or tok.startswith("-"):
+            i += 1
+        else:
+            return tok, i
+    return None, 0
+
+
+def _reorder_positionals_first(
+    tail: list[str],
+    with_value: set[str],
+    flags: set[str],
+) -> list[str]:
+    """Move option tokens (and their values) after all positional tokens.
+
+    Handles ``--opt value`` and ``--opt=value`` forms.  ``--`` ends option
+    parsing and everything after it is treated as positional.
+    """
+    opts: list[str] = []
+    pos: list[str] = []
+    i = 0
+    while i < len(tail):
+        tok = tail[i]
+        if tok == "--":
+            pos.extend(tail[i + 1 :])
+            break
+        if tok.startswith("-") and "=" in tok:
+            opts.append(tok)
+            i += 1
+        elif tok in with_value:
+            opts.append(tok)
+            if i + 1 < len(tail):
+                opts.append(tail[i + 1])
+                i += 2
+            else:
+                i += 1  # missing value: let argparse report it
+        elif tok in flags:
+            opts.append(tok)
+            i += 1
+        else:
+            pos.append(tok)
+            i += 1
+    return pos + opts
+
+
+def _normalize_argv(argv: list[str]) -> list[str]:
+    """Reorder argv for a friendly CLI.
+
+    * ``--dry-run`` may appear before or after the subcommand (README shows
+      ``cs2lm update --dry-run``); promote it to a global position so it is
+      parsed by the top-level parser instead of being rejected as unknown.
+    * For subcommands whose options may sit between positionals (``add``,
+      ``pack``), move every option token after the positionals.
+    """
+    if "--dry-run" in argv:
+        argv = ["--dry-run"] + [a for a in argv if a != "--dry-run"]
+    cmd, idx = _find_subcommand(argv)
+    spec = _INTERMIXED_COMMANDS.get(cmd or "")
+    if not spec:
+        return argv
+    with_value = set(spec["with_value"]) | _GLOBAL_VALUE_OPTIONS
+    flags = set(spec["flags"]) | _GLOBAL_FLAGS
+    tail = _reorder_positionals_first(argv[idx + 1 :], with_value, flags)
+    return argv[: idx + 1] + tail
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -122,7 +223,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_import = sub.add_parser("import", help="Import an installed plugin back into the repo")
     p_import.add_argument("name")
-    p_import.add_argument("path", help="Path inside the server directory")
+    p_import.add_argument("path", help="Path inside the server directory (relative paths resolve against the server root)")
     p_import.add_argument("--type", choices=framework_choices, default=None)
     p_import.add_argument("--version", default=None)
 
@@ -223,11 +324,26 @@ def _make_logger(args: argparse.Namespace) -> Logger:
 
 
 def cmd_init(args: argparse.Namespace, logger: Logger) -> int:
+    from cs2lm.config import load_config
+
     repo = Path(args.repo).expanduser().resolve()
     server = Path(args.server).expanduser().resolve()
-    if (repo / "config.json").exists():
+    cfg_path = repo / "config.json"
+    if cfg_path.exists():
+        cfg = load_config(repo)
+        old_server = cfg.get("server_path")
+        cfg["server_path"] = str(server)
+        cfg["csgo_rel"] = find_csgo_rel(server)
+        save_config(repo, cfg)
         print(f"Repository already initialized: {repo}")
-        logger.info("init", "repository already initialized", repo=str(repo))
+        print(f"Updated server path: {old_server or '(none)'} -> {server}")
+        print("Plugins, sources, and profiles were left untouched.")
+        logger.info(
+            "init",
+            "repository already initialized; server path updated",
+            repo=str(repo),
+            server=str(server),
+        )
         return 0
     (repo / "plugins").mkdir(parents=True, exist_ok=True)
     (repo / "profiles").mkdir(parents=True, exist_ok=True)
@@ -242,6 +358,21 @@ def cmd_init(args: argparse.Namespace, logger: Logger) -> int:
         csgo_rel=csgo_rel,
     )
     return 0
+
+
+def _added_label(manifest: dict) -> str:
+    """Human-readable confirmation for ``cs2lm add``."""
+    name = manifest["name"]
+    kind = manifest.get("kind") or manifest.get("plugin_type") or "plugin"
+    version = manifest.get("version")
+    if version:
+        return f"Added {name} ({kind} v{version})."
+    return f"Added {name} ({kind})."
+
+
+def _print_added(manifests: list[dict]) -> None:
+    for m in manifests:
+        print(_added_label(m))
 
 
 def cmd_add(args: argparse.Namespace, logger: Logger) -> int:
@@ -350,6 +481,7 @@ def cmd_add(args: argparse.Namespace, logger: Logger) -> int:
             names = split_names(args.plugins)
             if names:
                 manifests = add_split(names, source, tmp)
+                _print_added(manifests)
                 logger.info("add", f"added {len(manifests)} plugins from package")
                 return 0
             if not args.name:
@@ -363,6 +495,7 @@ def cmd_add(args: argparse.Namespace, logger: Logger) -> int:
             )
             warn_if_empty(args.name, source)
             warn_version_default(args.name, manifest, tmp)
+            _print_added([manifest])
     elif args.pkg:
         with tempfile.TemporaryDirectory(prefix="cs2lm-pkg-") as tmp:
             tmp = Path(tmp)
@@ -382,12 +515,14 @@ def cmd_add(args: argparse.Namespace, logger: Logger) -> int:
                     meta=meta,
                 )
                 warn_platform(plugin_name, meta)
+                _print_added([manifest])
             else:
                 type_hint = args.type or (meta or {}).get("plugin_type")
                 version = args.version or (meta or {}).get("version")
                 names = split_names(args.plugins) or (meta or {}).get("plugins") or []
                 if len(names) > 1:
                     manifests = add_split(names, source, tmp, meta)
+                    _print_added(manifests)
                     logger.info("add", f"added {len(manifests)} plugins from package")
                     return 0
                 plugin_name = args.name or (names[0] if names else None) or (meta or {}).get("name")
@@ -403,11 +538,13 @@ def cmd_add(args: argparse.Namespace, logger: Logger) -> int:
                     version=version,
                     meta=meta,
                 )
+                _print_added([manifest])
     else:
         if args.plugins:
             names = split_names(args.plugins)
             with tempfile.TemporaryDirectory(prefix="cs2lm-split-") as tmp:
                 manifests = add_split(names, args.path, Path(tmp))
+            _print_added(manifests)
             logger.info("add", f"added {len(manifests)} plugins from package")
             return 0
         if not args.name:
@@ -433,6 +570,7 @@ def cmd_add(args: argparse.Namespace, logger: Logger) -> int:
                 meta=local_meta,
             )
             warn_platform(args.name, local_meta)
+            _print_added([manifest])
         else:
             manifest = add_plugin(
                 args.repo,
@@ -442,6 +580,7 @@ def cmd_add(args: argparse.Namespace, logger: Logger) -> int:
                 version=args.version,
             )
             warn_if_empty(args.name, args.path)
+            _print_added([manifest])
     logger.info(
         "add",
         f"added plugin '{manifest['name']}'",
@@ -1058,7 +1197,7 @@ def main(argv: list[str] | None = None) -> int:
                 pass
 
     parser = build_parser()
-    args = parser.parse_args(argv)
+    args = parser.parse_args(_normalize_argv(list(sys.argv[1:] if argv is None else argv)))
     logger: Logger | None = None
     try:
         logger = _make_logger(args)

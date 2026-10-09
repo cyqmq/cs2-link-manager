@@ -23,8 +23,23 @@ class Logger:
         self._file = None
         if path:
             p = Path(path)
-            p.parent.mkdir(parents=True, exist_ok=True)
-            self._file = p.open("a", encoding="utf-8")
+            try:
+                # Deliberately do NOT mkdir the parent here: a user-supplied
+                # --log path should point into an existing directory, and a
+                # typo'd parent is reported instead of being silently created.
+                self._file = p.open("a", encoding="utf-8")
+            except FileNotFoundError as exc:
+                raise ValueError(
+                    f"Cannot write log file '{p}': directory "
+                    f"'{p.parent}' does not exist. Create it first or "
+                    "choose a writable --log path."
+                ) from exc
+            except PermissionError as exc:
+                raise ValueError(
+                    f"Cannot write log file '{p}': directory "
+                    f"'{p.parent}' exists but is not writable. Choose a "
+                    "different --log path or fix its permissions."
+                ) from exc
 
     def _emit(self, level: str, event: str, message: str, **fields: object) -> None:
         if self.fmt == "json":

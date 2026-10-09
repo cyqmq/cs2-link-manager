@@ -142,6 +142,25 @@ def test_cli_install_by_catalog_reference(repo_server, tmp_path):
     assert load_manifest(repo, "CatPlugin")["version"] == "2.0.0"
 
 
+def test_cli_install_hash_registry_entry(repo_server, tmp_path):
+    """install #N resolves registry entries from the search snapshot (Bug 2)."""
+    repo, _server = repo_server
+    zip_reg = _zip_package(make_css_package(tmp_path, "RegPlugin"), tmp_path / "reg.zip")
+    assert cli.main(["--repo", str(repo), "registry", "add", "RegPlugin", zip_reg.as_uri()]) == 0
+
+    assert cli.main(["--repo", str(repo), "search"]) == 0
+    snap = json.loads((repo / "state" / "search_result.json").read_text(encoding="utf-8"))
+    reg_rows = [r for r in snap["results"] if r["name"] == "RegPlugin"]
+    assert reg_rows and reg_rows[0]["source_kind"] == "registry"
+
+    assert cli.main(["--repo", str(repo), "install", "#1"]) == 0
+    assert "RegPlugin" in list_plugins(repo)
+    from cs2lm.installer import PluginManager
+
+    installed = [p["name"] for p in PluginManager(repo).list_plugins() if p["installed"]]
+    assert "RegPlugin" in installed
+
+
 def test_cli_install_by_name_falls_back_to_source(repo_server, tmp_path):
     """install <name> falls back to configured sources when not in the repo."""
     repo, _server = repo_server

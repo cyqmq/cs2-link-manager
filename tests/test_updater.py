@@ -195,6 +195,37 @@ def test_cli_update_dry_run_flag(repo_server, tmp_path):
     assert load_manifest(repo, "DryUpd") == manifest_before
 
 
+def test_cli_update_dry_run_after_subcommand(repo_server, tmp_path):
+    """`cs2lm update --dry-run` is recognized (Bug 3)."""
+    repo, _server = repo_server
+    pkg = make_css_package(tmp_path, "DryUpd2")
+    add_plugin(repo, "DryUpd2", pkg)
+
+    dll = pkg / "addons" / "counterstrikesharp" / "plugins" / "DryUpd2" / "DryUpd2.dll"
+    dll.write_bytes(b"NEW")
+    zip_path2 = _zip_package(pkg, tmp_path / "dry2b.zip")
+    index_path = _write_index(
+        tmp_path,
+        {
+            "DryUpd2": {
+                "id": "DryUpd2",
+                "version": "1.1.0",
+                "download_url": zip_path2.as_uri(),
+                "plugin_type": "css",
+            }
+        },
+    )
+    assert (
+        cli.main(["--repo", str(repo), "source", "add", index_path.as_uri()])
+        == 0
+    )
+
+    manifest_before = load_manifest(repo, "DryUpd2")
+    # --dry-run after the subcommand must be honored.
+    assert cli.main(["--repo", str(repo), "update", "DryUpd2", "--dry-run", "--yes"]) == 0
+    assert load_manifest(repo, "DryUpd2") == manifest_before
+
+
 def test_cli_update_multi_plugin(repo_server, tmp_path):
     """cs2lm update refreshes each plugin in a multi-plugin package."""
     from conftest import make_multi_css_package

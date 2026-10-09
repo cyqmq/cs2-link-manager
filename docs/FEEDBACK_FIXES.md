@@ -73,3 +73,44 @@ Status: [x] done, [~] in progress, [ ] planned.
       framework plugins and Metamod addons per-framework.
 - [x] Platform awareness: `platform` mismatch warns on import/install.
 - [x] Tests + docs for all of the above.
+
+## Second-round feedback (old users)
+
+### B1 — `add` options mixed between positional arguments fail to parse
+- [x] `_normalize_argv` reorders argv so positionals come first; `add Name
+      --type css path` and `pack Alpha --name X Beta --out dir` work.
+- [x] `--dry-run` may appear before or after the subcommand (promoted to a
+      global position; subparser duplicates would break argparse's global
+      flag, so they are not added).
+- [x] Tests: intermixed add/pack, `--dry-run` after `update`, invalid
+      `add --force` still exits 2.
+
+### B2 — `install #N` ignores registry entries
+- [x] `catalog.install_plugin()` enters the registry branch when the snapshot
+      provides `registry_entry` (condition now includes
+      `registry_entry is not None`).
+- [x] Test: `install #1` from a registry-only search snapshot installs.
+
+### B3 — `update --dry-run` unrecognized
+- [x] `--dry-run` after the subcommand is accepted and honored.
+
+### U4 — `import` path semantics
+- [x] `importer.import_plugin` resolves relative paths against the server
+      root; `import <name> game/csgo/...` works from any CWD.
+- [x] Help text + README updated.
+
+### U5 — `add` success prints nothing
+- [x] `cmd_add` prints `Added <name> (<type> v<version>).` on every path
+      (local, URL, --pkg, content, multi-plugin split).
+
+### U6 — repeated `init` cannot change server path
+- [x] `cmd_init` on an existing repo updates `server_path` / `csgo_rel`
+      (plugins/sources/profiles untouched) and reports the change.
+
+### U7 — `--log` silently creates missing directories
+- [x] `Logger` no longer mkdirs the parent; missing/unwritable parent raises
+      a friendly `ValueError` ("directory ... does not exist / is not writable").
+- [x] Test for missing parent + existing unwritable parent.
+
+## Docs
+- [x] README/CHANGELOG updated for every item above.
