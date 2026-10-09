@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from urllib.parse import urlparse
 
 REGISTRY_FILENAME = "registry.json"
 
@@ -82,6 +83,14 @@ def registry_add(
         raise ValueError("Registry entry name cannot be empty")
     if not url:
         raise ValueError("Registry entry URL cannot be empty")
+    parsed_url = urlparse(url)
+    if parsed_url.scheme not in ("http", "https", "file"):
+        raise ValueError(
+            f"Invalid registry URL: '{url}'. Expected an http(s) or file:// "
+            "URL such as https://example.com/plugin.zip."
+        )
+    if parsed_url.scheme in ("http", "https") and not parsed_url.netloc:
+        raise ValueError(f"Invalid registry URL: '{url}' (missing host).")
     _warn_if_unreachable(url)
     entry = {
         "url": url,

@@ -183,6 +183,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **web --daemon port conflict no longer misreports success**: each launch
+  generates a random nonce that the child echoes through `/api/health`; the
+  parent only reports "ready" when the response carries *this* launch's
+  nonce. A second daemon on an occupied port now fails with a clear `error:`
+  and leaves no pidfile behind.
+- **invalid .cs2pkg friendly error**: `add --pkg` on a non-zip file now
+  raises `Invalid .cs2pkg file ... not a valid zip archive` instead of a
+  `zipfile.BadZipFile` traceback.
+- **search with no results keeps the snapshot**: an empty search no longer
+  overwrites `state/search_result.json`, so `install #N` references stay
+  valid.
+- **install --force is remembered**: a plugin installed with `--force` records
+  `force_installed` on its manifest; a later `disable` + `enable` (or an
+  `update` relink) no longer requires `--force` again.
+- **read-only commands with --log**: `list`/`doctor`/`search` etc. now emit
+  a `command completed` record, so `--log` produces a non-empty file.
+- **friendly "Source not found"**: `add`/`import`/`add_content` now say
+  "Plugin source not found: ... Check that the path exists", and `add` on an
+  uninitialized repo explains to run `cs2lm init` first.
+- **init warns on missing server path**: `cs2lm init --server` prints a
+  warning when the server directory does not exist yet.
+- **registry add rejects non-URLs**: `registry add <name> not-a-url` is
+  rejected instead of being saved with only an unreachable warning.
+- **profile delete warns**: deleting a profile whose plugins are still
+  enabled warns that enabled state is not rolled back.
+- **empty/non-plugin dirs add with a warning**: `classify_plugin` now falls
+  back to `css` for directories with no recognizable layout, matching the
+  README's promised warning instead of raising.
+- **search version column placeholder**: entries without a version display
+  `-` in the table.
 - **add/pack options between positionals**: `cs2lm add Name --type css path`
   and `cs2lm pack Alpha --name X Beta --out dir` now parse correctly (argv
   is reordered so positionals come first). `--dry-run` after a subcommand is

@@ -114,3 +114,60 @@ Status: [x] done, [~] in progress, [ ] planned.
 
 ## Docs
 - [x] README/CHANGELOG updated for every item above.
+
+## Third-round feedback (5 bugs + 6 UX)
+
+### B1 — `web --daemon` port conflict falsely reports success
+- [x] `start_daemon` generates a per-launch nonce (`CS2LM_READY_NONCE`) that
+      the child echoes through `/api/health`; `_probe_ready` only returns true
+      when the health body carries *this* launch's nonce.
+- [x] On an occupied port the second child exits, the parent raises
+      `DaemonError`, no pidfile is written.
+- [x] Unit test: `_probe_ready` matches/refuses nonces against a local HTTP
+      server.
+
+### B2 — invalid `.cs2pkg` throws a traceback
+- [x] `extract_pkg` wraps `zipfile.BadZipFile` in a friendly `ValueError`
+      ("Invalid .cs2pkg file ... not a valid zip archive").
+- [x] CLI test: `add --pkg fake.cs2pkg` returns 1 with a friendly message.
+
+### B3 — `search` with no results overwrites the install snapshot
+- [x] `save_search_results` returns False and preserves the old snapshot when
+      a search yields no rows; `cmd_search` prints a note.
+- [x] Test: a no-result search keeps the previous `install #N` snapshot.
+
+### B4 — `install --force` vs `enable` inconsistency
+- [x] `_install_plugin` skips the framework guard when the manifest carries
+      `force_installed`; a force install records it, so plain `enable` after
+      `disable` works without `--force`.
+- [x] Test: force-install -> disable -> enable without force.
+
+### B5 — read-only commands with `--log` produce an empty file
+- [x] `main` logs a `command completed` record after every successful command,
+      so `list`/`doctor`/`search` populate `--log`.
+
+### U1 — "Source not found" too vague / uninit repo not distinguished
+- [x] `add_plugin`/`add_content` say "Plugin source not found ... check the
+      path"; `cmd_add` checks initialization first and tells the user to run
+      `cs2lm init`.
+
+### U2 — `init` to a nonexistent server path silently succeeds
+- [x] `cmd_init` prints a warning when `--server` does not exist yet.
+
+### U3 — `registry add not-a-url` is saved despite a warning
+- [x] `registry_add` rejects URLs whose scheme is not http/https/file.
+
+### U4 — `profile delete` of an in-use profile has no warning
+- [x] `cmd_profile delete` warns when the deleted profile's plugins are
+      still enabled (no rollback).
+
+### U5 — README promises warning for non-plugin dirs but `add` errors
+- [x] `classify_plugin` defaults directories with no recognizable layout to
+      `css`, so the existing "does not look like a plugin" warning runs
+      (README behavior restored).
+
+### U6 — `search` version column blank for versionless entries
+- [x] `print_catalog` displays `-` for entries without a version.
+
+## Docs
+- [x] README/CHANGELOG updated for every item above; tests: 217 passing.

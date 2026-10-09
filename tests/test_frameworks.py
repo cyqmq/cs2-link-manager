@@ -134,6 +134,22 @@ def test_install_guard_blocks_missing_framework(repo_server, tmp_path):
     assert manifest["enabled"] is True
 
 
+def test_force_install_remembers_enable_without_force(repo_server, tmp_path):
+    """After install --force, plain `enable` works again (Bug 4)."""
+    repo, _server = repo_server
+    pkg = make_framework_package(tmp_path, "plugify", "PlF")
+    add_plugin(repo, "PlF", pkg)
+
+    assert cli.main(["--repo", str(repo), "install", "PlF", "--force"]) == 0
+    manifest = load_manifest(repo, "PlF")
+    assert manifest.get("force_installed") is True
+
+    assert cli.main(["--repo", str(repo), "disable", "PlF"]) == 0
+    # No --force needed: the plugin was already force-approved.
+    assert cli.main(["--repo", str(repo), "enable", "PlF"]) == 0
+    assert load_manifest(repo, "PlF")["enabled"] is True
+
+
 def test_install_guard_allows_css(repo_server, tmp_path):
     repo, _server = repo_server
     pkg = make_css_package(tmp_path, "CssPlugin")

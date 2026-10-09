@@ -381,14 +381,18 @@ class _Handler(BaseHTTPRequestHandler):
         # Readiness probe: deliberately auth-free so wrapper scripts can use it
         # as a health check without knowing the token.
         if parsed.path == "/api/health":
-            self._send_json(
-                {
-                    "status": "ok",
-                    "service": "cs2-link-manager-web",
-                    "repo": self.server.repo,
-                    "auth": bool(getattr(self.server, "auth_token", None)),
-                }
-            )
+            payload = {
+                "status": "ok",
+                "service": "cs2-link-manager-web",
+                "repo": self.server.repo,
+                "auth": bool(getattr(self.server, "auth_token", None)),
+            }
+            # Daemonized launches echo their unique nonce so the parent can
+            # verify this is *our* child, not another daemon on the same port.
+            nonce = getattr(self.server, "daemon_nonce", None)
+            if nonce:
+                payload["nonce"] = nonce
+            self._send_json(payload)
             return
         token = self._request_token()
         if not self._authorized(token):
@@ -513,6 +517,7 @@ def run_webui(repo: str | Path, host: str = "127.0.0.1", port: int = 8080, auth_
         raise ValueError(f"Invalid port: {port}. Port must be between 0 and 65535.") from exc
     server.repo = str(Path(repo).resolve())
     server.auth_token = auth_token
+    server.daemon_nonce = os.environ.get("CS2LM_READY_NONCE")
     actual_port = server.server_address[1]
     print(f"cs2-link-manager Web UI at http://{host}:{actual_port}/  (Ctrl+C to stop)")
     print(f"CS2LM_READY port={actual_port} auth={'required' if auth_token else 'none'}")

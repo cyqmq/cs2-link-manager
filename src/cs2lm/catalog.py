@@ -192,7 +192,7 @@ def print_catalog(rows: list[dict]) -> None:
         return
     idx_w = max(len(str(len(rows))), 1)
     name_w = max(len("名称"), *(len(str(r["name"])) for r in rows))
-    ver_w = max(len("版本"), *(len(str(r["version"] or "")) for r in rows))
+    ver_w = max(len("版本"), *(len(str(r["version"] or "-")) for r in rows))
     status_w = max(len("状态"), *(len(str(r["status"])) for r in rows))
     source_w = max(len("来源"), *(len(str(r["source"])) for r in rows))
     header = (
@@ -203,19 +203,27 @@ def print_catalog(rows: list[dict]) -> None:
     for r in rows:
         print(
             f"#  [{r['index']:>{idx_w}}]  {str(r['name']):<{name_w}}  "
-            f"{str(r['version'] or ''):<{ver_w}}  {str(r['status']):<{status_w}}  "
+            f"{str(r['version'] or '-'):<{ver_w}}  {str(r['status']):<{status_w}}  "
             f"{str(r['source']):<{source_w}}  {r['description']}"
         )
 
 
-def save_search_results(repo: str | Path, rows: list[dict]) -> None:
-    """Persist the catalog snapshot for ``install #N`` to reference."""
+def save_search_results(repo: str | Path, rows: list[dict]) -> bool:
+    """Persist the catalog snapshot for ``install #N`` to reference.
+
+    Returns ``True`` when the snapshot was written. When a search yields no
+    results the previous snapshot is preserved (overwriting it would break
+    ``install #N`` references the user may still want to use).
+    """
     path = Path(repo) / SEARCH_RESULTS
+    if not rows and path.exists():
+        return False
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps({"results": rows}, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
+    return True
 
 
 def load_search_results(repo: str | Path) -> list[dict]:

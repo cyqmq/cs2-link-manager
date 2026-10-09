@@ -103,13 +103,15 @@ def test_add_plugin_rejects_core_overwrite(repo_server, tmp_path):
         add_plugin(repo, "Bad", pkg)
 
 
-def test_add_plugin_unknown_type(repo_server, tmp_path):
+def test_add_plugin_unknown_type_defaults_to_css(repo_server, tmp_path):
+    """A directory with no recognizable plugin layout is added as CSS with a
+    warning (README promises a warning, not an error, for non-plugin dirs)."""
     repo, _server = repo_server
     pkg = tmp_path / "Mystery"
     pkg.mkdir()
     (pkg / "data.bin").write_bytes(b"x")
-    with pytest.raises(ValueError, match="Could not detect plugin type"):
-        add_plugin(repo, "Mystery", pkg)
+    manifest = add_plugin(repo, "Mystery", pkg)
+    assert manifest["plugin_type"] == "css"
 
 
 def test_classify_plugin(tmp_path):

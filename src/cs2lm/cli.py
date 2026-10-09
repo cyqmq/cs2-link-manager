@@ -328,6 +328,12 @@ def cmd_init(args: argparse.Namespace, logger: Logger) -> int:
 
     repo = Path(args.repo).expanduser().resolve()
     server = Path(args.server).expanduser().resolve()
+    if not server.exists():
+        print(f"WARNING: server path does not exist yet: {server}")
+        print(
+            "         This is fine if the server has not been set up yet; "
+            "'cs2lm doctor' will verify it later."
+        )
     cfg_path = repo / "config.json"
     if cfg_path.exists():
         cfg = load_config(repo)
@@ -376,6 +382,16 @@ def _print_added(manifests: list[dict]) -> None:
 
 
 def cmd_add(args: argparse.Namespace, logger: Logger) -> int:
+    from cs2lm.config import load_config
+
+    try:
+        load_config(args.repo)
+    except FileNotFoundError as exc:
+        raise ValueError(
+            "Repository not initialized. Run "
+            "'cs2lm init --repo <repo> --server <server>' first."
+        ) from exc
+
     from cs2lm.cs2pkg import extract_pkg
     from cs2lm.frameworks import platform_matches
     from cs2lm.manifest import (
@@ -847,7 +863,11 @@ def cmd_search(args: argparse.Namespace, logger: Logger) -> int:
     for warning in warnings:
         print(f"warning: {warning}")
     print_catalog(rows)
-    save_search_results(args.repo, rows)
+    if not save_search_results(args.repo, rows):
+        print(
+            "No results: the previous search snapshot was kept so "
+            "'install #N' references still work."
+        )
     logger.info("search", f"catalog: {len(rows)} results", rows=len(rows))
     return 0
 
@@ -1078,7 +1098,24 @@ def cmd_profile(args: argparse.Namespace, logger: Logger) -> int:
         logger.info("profile", f"created profile '{args.name}'")
         return 0
     if command == "delete":
+        from cs2lm.manifest import list_plugins as list_repo_plugins
+
+        profile = profiles.get_profile(args.repo, args.name)
+        manager = PluginManager(args.repo, logger=logger)
+        still_enabled = [
+            pn
+            for pn in profile.get("plugins", [])
+            if pn in list_repo_plugins(args.repo) and manager.plugin_has_links(pn)
+        ]
         profiles.delete_profile(args.repo, args.name)
+        if still_enabled:
+            print(
+                f"WARNING: deleted profile '{args.name}' but "
+                f"{len(still_enabled)} plugin(s) are still enabled on the "
+                f"server: {', '.join(still_enabled)}. Deleting a profile does "
+                "not change enabled plugins; use 'cs2lm disable <name>' or "
+                "switch to another profile."
+            )
         logger.info("profile", f"deleted profile '{args.name}'")
         return 0
     if command == "use":
@@ -1202,7 +1239,13 @@ def main(argv: list[str] | None = None) -> int:
     try:
         logger = _make_logger(args)
         handler = HANDLERS[args.command]
-        return handler(args, logger)
+        rc = handler(args, logger)
+        # Read-only commands (list/doctor/search/...) print to stdout and
+        # never emit events, so with --log the file would stay empty. A single
+        # completion record keeps the log useful for every command.
+        if logger is not None:
+            logger.info("cli", "command completed", command=args.command, rc=rc)
+        return rc
     except (linking.ConflictError, InstallError) as exc:
         logger = logger or Logger()
         logger.error("cli", str(exc))

@@ -36,7 +36,10 @@ def import_plugin(
     source = raw_source.resolve()
 
     if not source.exists():
-        raise FileNotFoundError(f"Source not found: {source}")
+        raise FileNotFoundError(
+            f"Import source not found: '{source}'. No plugin was found at "
+            "this path inside the server directory."
+        )
     if raw_source.is_symlink() or linking.is_junction(raw_source):
         raise ValueError(
             f"{raw_source} is a symlink (it resolves to {source}) and is "

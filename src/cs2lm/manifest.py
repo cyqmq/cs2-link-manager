@@ -125,6 +125,10 @@ def classify_plugin(source: str | Path, type_hint: str | None = None) -> str:
             native = list((src / "bin").rglob("*.so")) + list((src / "bin").rglob("*.dll"))
             if native:
                 return "metamod"
+        # No recognizable layout: default to CSS so the caller can add it with
+        # the existing "does not look like a plugin package" warning (this is
+        # what the README promises for empty / non-plugin directories).
+        return "css"
     else:
         if src.suffix.lower() == ".dll":
             return "css"
@@ -643,7 +647,10 @@ def add_plugin(
     """
     source_path = Path(source).expanduser()
     if not source_path.exists():
-        raise FileNotFoundError(f"Source not found: {source_path}")
+        raise FileNotFoundError(
+            f"Plugin source not found: '{source_path}'. Check that the path "
+            "exists and try again."
+        )
     name = sanitize_name(name)
     pdir = plugin_dir(repo, name)
     if pdir.exists():
@@ -808,7 +815,10 @@ def add_content(
     """
     source_path = Path(source).expanduser()
     if not source_path.exists():
-        raise FileNotFoundError(f"Source not found: {source_path}")
+        raise FileNotFoundError(
+            f"Plugin source not found: '{source_path}'. Check that the path "
+            "exists and try again."
+        )
     name = sanitize_name(name)
     pdir = plugin_dir(repo, name)
     if pdir.exists():

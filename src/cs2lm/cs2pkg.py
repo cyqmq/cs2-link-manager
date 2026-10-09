@@ -45,11 +45,19 @@ def extract_pkg(zip_path: str | Path, dest_dir: str | Path) -> tuple[Path, dict 
     parsed ``cs2pkg.json`` (or ``None``). Content packages (``kind ==
     "content"``) return the package root so ``add_content`` can see every
     declared root (``cfg/``, ``overrides/``, ``game/``, ...).
+
+    Raises :class:`ValueError` when the file is not a valid zip archive.
     """
     dest = Path(dest_dir)
     dest.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(zip_path) as zf:
-        zf.extractall(dest)
+    try:
+        with zipfile.ZipFile(zip_path) as zf:
+            zf.extractall(dest)
+    except zipfile.BadZipFile as exc:
+        raise ValueError(
+            f"Invalid .cs2pkg file '{zip_path}': the file is not a valid zip "
+            "archive. Re-download the package or check that the path is correct."
+        ) from exc
     meta = load_pkg_meta(zip_path)
     if (meta or {}).get("kind") == "content":
         return dest, meta

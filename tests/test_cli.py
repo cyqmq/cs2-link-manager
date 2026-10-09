@@ -424,3 +424,118 @@ def test_init_repeat_updates_server_path(tmp_path):
     assert run(["--repo", str(repo), "init", "--server", str(srv2)]) == 0
     cfg2 = json.loads((repo / "config.json").read_text(encoding="utf-8"))
     assert cfg2["server_path"] == str(srv2.resolve())
+
+
+# ---------------------------------------------------------------------------
+# Bug 2: invalid .cs2pkg gives a friendly error instead of a traceback
+# ---------------------------------------------------------------------------
+
+
+def test_add_invalid_cs2pkg_friendly(repo_server, tmp_path, capsys):
+    """A non-zip .cs2pkg file is rejected with a friendly message."""
+    repo, _server = repo_server
+    fake = tmp_path / "fake.cs2pkg"
+    fake.write_text("not a zip", encoding="utf-8")
+    assert run(["--repo", str(repo), "add", "--pkg", str(fake)]) == 1
+    captured = capsys.readouterr()
+    assert "not a valid zip" in (captured.out + captured.err)
+
+
+# ---------------------------------------------------------------------------
+# Bug 5: read-only commands with --log still populate the log file
+# ---------------------------------------------------------------------------
+
+
+def test_readonly_command_writes_log(repo_server, tmp_path):
+    """list (a read-only command) with --log must write to the log file."""
+    repo, _server = repo_server
+    log_file = tmp_path / "ro.log"
+    assert run(["--repo", str(repo), "--log", str(log_file), "list"]) == 0
+    text = log_file.read_text(encoding="utf-8")
+    assert "command completed" in text
+
+
+# ---------------------------------------------------------------------------
+# UX 1: distinguish "source path missing" from "repository not initialized"
+# ---------------------------------------------------------------------------
+
+
+def test_add_nonexistent_path_friendly(repo_server, tmp_path, capsys):
+    """add with a missing path explains that the source path does not exist."""
+    repo, _server = repo_server
+    missing = tmp_path / "nope"
+    assert run(["--repo", str(repo), "add", "Ghost", str(missing)]) == 1
+    captured = capsys.readouterr()
+    assert "Plugin source not found" in (captured.out + captured.err)
+
+
+def test_add_uninitialized_repo_friendly(tmp_path, capsys):
+    """add on an uninitialized repo tells the user to run init first."""
+    repo = tmp_path / "not-init"
+    assert run(["--repo", str(repo), "add", "X", str(tmp_path)]) == 1
+    captured = capsys.readouterr()
+    assert "Repository not initialized" in (captured.out + captured.err)
+
+
+# ---------------------------------------------------------------------------
+# UX 2: init warns when the server path does not exist
+# ---------------------------------------------------------------------------
+
+
+def test_init_nonexistent_server_warns(tmp_path, capsys):
+    """init to a missing server path prints a warning, not silence."""
+    repo = tmp_path / "repo"
+    for d in ("plugins", "profiles", "state"):
+        (repo / d).mkdir(parents=True, exist_ok=True)
+    srv = tmp_path / "does-not-exist"
+    assert run(["--repo", str(repo), "init", "--server", str(srv)]) == 0
+    captured = capsys.readouterr()
+    assert "WARNING: server path does not exist yet" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# UX 3: registry add rejects strings that are obviously not URLs
+# ---------------------------------------------------------------------------
+
+
+def test_registry_add_rejects_non_url(repo_server, capsys):
+    """registry add 'not-a-url' fails instead of silently saving it."""
+    repo, _server = repo_server
+    assert run(["--repo", str(repo), "registry", "add", "BadUrl", "not-a-url"]) == 1
+    captured = capsys.readouterr()
+    assert "Invalid registry URL" in (captured.out + captured.err)
+
+
+# ---------------------------------------------------------------------------
+# UX 4: profile delete warns when its plugins are still enabled
+# ---------------------------------------------------------------------------
+
+
+def test_profile_delete_warns_enabled_plugins(repo_server, tmp_path, capsys):
+    """Deleting a profile whose plugins are enabled warns about no rollback."""
+    from cs2lm.installer import PluginManager
+
+    repo, _server = repo_server
+    pkg = make_css_package(tmp_path, "ProPlugin")
+    assert run(["--repo", str(repo), "add", "ProPlugin", str(pkg)]) == 0
+    assert run(["--repo", str(repo), "install", "ProPlugin"]) == 0
+    assert PluginManager(repo).plugin_has_links("ProPlugin")
+    assert run(["--repo", str(repo), "profile", "create", "prod", "ProPlugin"]) == 0
+    assert run(["--repo", str(repo), "profile", "delete", "prod"]) == 0
+    captured = capsys.readouterr()
+    assert "still enabled" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# UX 5: adding an empty directory warns (README behavior) instead of erroring
+# ---------------------------------------------------------------------------
+
+
+def test_add_empty_dir_warns(repo_server, tmp_path, capsys):
+    """An empty directory is added with a warning, matching the README."""
+    repo, _server = repo_server
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    assert run(["--repo", str(repo), "add", "Empty", str(empty)]) == 0
+    captured = capsys.readouterr()
+    assert "does not look like a plugin" in (captured.out + captured.err)

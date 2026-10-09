@@ -161,6 +161,58 @@ def test_cli_install_hash_registry_entry(repo_server, tmp_path):
     assert "RegPlugin" in installed
 
 
+# ---------------------------------------------------------------------------
+# Bug 3: a search with no results keeps the previous install snapshot
+# ---------------------------------------------------------------------------
+
+
+def test_search_no_results_keeps_snapshot(repo_server, tmp_path):
+    """An empty search must not overwrite the snapshot used by install #N."""
+    repo, _server = repo_server
+    zip_path = _zip_package(make_css_package(tmp_path, "KeepMe"), tmp_path / "keep.zip")
+    index_path = _write_index(
+        tmp_path,
+        {
+            "KeepMe": {
+                "id": "KeepMe",
+                "version": "1.0.0",
+                "download_url": zip_path.as_uri(),
+                "plugin_type": "css",
+            }
+        },
+    )
+    _add_source(repo, index_path)
+
+    assert cli.main(["--repo", str(repo), "search"]) == 0
+    snap1 = json.loads((repo / "state" / "search_result.json").read_text(encoding="utf-8"))
+    assert any(r["name"] == "KeepMe" for r in snap1["results"])
+
+    # A query with no matches must not clear the snapshot.
+    assert cli.main(["--repo", str(repo), "search", "no-such-plugin"]) == 0
+    snap2 = json.loads((repo / "state" / "search_result.json").read_text(encoding="utf-8"))
+    assert any(r["name"] == "KeepMe" for r in snap2["results"])
+
+
+# ---------------------------------------------------------------------------
+# UX 6: version column shows '-' for entries without a version
+# ---------------------------------------------------------------------------
+
+
+def test_search_shows_dash_for_versionless_registry(repo_server, tmp_path, capsys):
+    """Registry entries without a version display '-' in the table."""
+    import re
+
+    repo, _server = repo_server
+    zip_reg = _zip_package(make_css_package(tmp_path, "NoVer"), tmp_path / "nv.zip")
+    assert cli.main(["--repo", str(repo), "registry", "add", "NoVer", zip_reg.as_uri()]) == 0
+    capsys.readouterr()  # discard the "Registry: added" line
+
+    assert cli.main(["--repo", str(repo), "search"]) == 0
+    out = capsys.readouterr().out
+    line = next(l for l in out.splitlines() if "NoVer" in l)
+    assert re.search(r"NoVer\s+-", line)
+
+
 def test_cli_install_by_name_falls_back_to_source(repo_server, tmp_path):
     """install <name> falls back to configured sources when not in the repo."""
     repo, _server = repo_server

@@ -142,7 +142,10 @@ class PluginManager:
 
     def _install_plugin(self, name: str, components: list[str] | None = None) -> None:
         manifest = load_manifest(self.repo, name)
-        if not self.force:
+        # A plugin the user force-installed before stays force-approved: plain
+        # `enable` after `disable` must not re-trigger the framework guard.
+        force_approved = bool(self.force) or bool(manifest.get("force_installed"))
+        if not force_approved:
             from cs2lm.frameworks import FrameworkMissingError, require_framework_present
 
             reqs: list[str] = list(manifest.get("requires_frameworks") or [])
@@ -228,6 +231,8 @@ class PluginManager:
             if not self.dry_run:
                 manifest["enabled"] = True
                 manifest["updated_at"] = _now()
+                if self.force:
+                    manifest["force_installed"] = True
                 save_manifest(self.repo, name, manifest)
                 self._save_state(state)
             self.logger.info("install", f"installed {name}")

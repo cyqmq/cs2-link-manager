@@ -9,9 +9,15 @@ The parent process waits until the child is actually listening (probed via
 ``/api/health`` or the ``CS2LM_READY port=...`` line in the log file) before
 reporting success, so a failed bind (port already in use) surfaces immediately
 instead of printing "Started web UI daemon" while the child is already dead.
+
+Each launch gets a random nonce that the child echoes through ``/api/health``.
+The parent only reports "ready" when the health response carries *this*
+launch's nonce, so a second daemon started on an occupied port can never be
+fooled by the first daemon's healthy endpoint.
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
@@ -19,6 +25,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+import uuid
 from pathlib import Path
 
 import cs2lm
@@ -35,8 +42,13 @@ def _probe_ready(
     host: str,
     port: int,
     auth_token: str | None,
+    nonce: str | None = None,
 ) -> bool:
-    """Return ``True`` when the child web UI answers ``/api/health``."""
+    """Return ``True`` when *our* child web UI answers ``/api/health``.
+
+    With ``nonce`` set, the health response must carry the same nonce so an
+    already-running daemon on the same port cannot satisfy the probe.
+    """
     check_host = "127.0.0.1" if host in ("0.0.0.0", "::", "::0") else host
     url = f"http://{check_host}:{port}/api/health"
     headers = {}
@@ -45,7 +57,15 @@ def _probe_ready(
     req = urllib.request.Request(url, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=0.5) as resp:
-            return resp.status == 200
+            if resp.status != 200:
+                return False
+            if nonce is None:
+                return True
+            try:
+                body = json.loads(resp.read().decode("utf-8"))
+            except (ValueError, UnicodeDecodeError):
+                return False
+            return body.get("nonce") == nonce
     except (OSError, urllib.error.HTTPError, ValueError):
         return False
 
@@ -86,6 +106,7 @@ def start_daemon(
 
     # `-u` keeps stdout unbuffered so the CS2LM_READY line is flushed to the
     # log file immediately, not when the child process exits.
+    nonce = uuid.uuid4().hex
     cmd = [
         sys.executable,
         "-u",
@@ -108,6 +129,9 @@ def start_daemon(
     pkg_parent = str(Path(cs2lm.__file__).resolve().parent.parent)
     existing_pythonpath = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = pkg_parent + os.pathsep + existing_pythonpath
+    # The child's /api/health echoes this nonce so the parent can tell our
+    # child apart from an already-running daemon on the same port.
+    env["CS2LM_READY_NONCE"] = nonce
 
     stdin = subprocess.DEVNULL
     log_handle = None
@@ -153,11 +177,11 @@ def start_daemon(
             )
         ready = False
         if port != 0:
-            ready = _probe_ready(host, port, auth_token)
+            ready = _probe_ready(host, port, auth_token, nonce=nonce)
         elif logfile:
             actual_port = _log_ready_port(logfile)
             if actual_port is not None:
-                ready = _probe_ready(host, actual_port, auth_token)
+                ready = _probe_ready(host, actual_port, auth_token, nonce=nonce)
         if ready:
             if pidfile:
                 Path(pidfile).write_text(str(proc.pid), encoding="utf-8")
