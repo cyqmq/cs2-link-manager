@@ -281,6 +281,7 @@ def install_plugin(
     yes: bool = False,
     timeout: int | None = None,
     from_registry: bool = False,
+    components: list[str] | None = None,
     logger=None,
 ) -> dict:
     """Install a plugin by name or catalog reference (``#N``).
@@ -296,7 +297,7 @@ def install_plugin(
     """
     from cs2lm.config import load_config
     from cs2lm.installer import PluginManager
-    from cs2lm.manifest import add_plugin, list_plugins, split_css_plugins
+    from cs2lm.manifest import add_plugin, list_plugins, split_package_plugins
     from cs2lm.registry import load_registry
     from cs2lm.sources import fetch_and_merge, get_sources
     from cs2lm.url_add import (
@@ -383,7 +384,7 @@ def install_plugin(
                 plugin_names = registry_entry.get("plugins") or []
                 if len(plugin_names) > 1:
                     added = 0
-                    for pname, split_src in split_css_plugins(
+                    for pname, split_src in split_package_plugins(
                         source, plugin_names, tmp_path
                     ):
                         add_plugin(
@@ -415,7 +416,7 @@ def install_plugin(
         yes=yes,
         logger=logger,
     )
-    manager.install(name)
+    manager.install(name, components=components)
     if not dry_run:
         messages.append(f"Installed {name}.")
     return {"name": name, "messages": messages, "status": "ok"}

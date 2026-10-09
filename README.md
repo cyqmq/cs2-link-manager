@@ -82,7 +82,7 @@ cs2lm profile use competitive
 | --- | --- |
 | `init --server <dir>` | 创建仓库骨架和 `config.json`。 |
 | `add <name> <path>` / `add <name> --url <zip-url> [--addons-subdir <dir>]` / `add [<name>] --pkg <file.cs2pkg>` | 把插件包（本地目录、下载的 zip 或 `.cs2pkg`）复制进仓库，生成 `manifest.json`；`--pkg` 省略名字时用 `cs2pkg.json` 的 `name`；`--addons-subdir` 指定 zip 内 `addons/` 树所在的子目录（如 `public`）；`--type css|metamod|swiftly|plugify|modsharp` 可跳过自动识别。传 `.cs2pkg` 路径给 `add <name> <path>` 会提示改用 `--pkg`；包内没有 `manifest.json`/`cs2pkg.json` 时版本默认 `1.0.0` 并打印警告（可用 `--version` 指定）；包看起来不像插件（无 addons/ 树或二进制）时也会警告。 |
-| `pack <name> [--out <dir>]` | 把仓库插件打包成 `.cs2pkg` 文件。 |
+| `pack <name> [<name> ...] [--name <label>] [--out <dir>]` | 把仓库插件打包成 `.cs2pkg` 文件；传多个名字（空格或逗号分隔）会打成**多插件包**。 |
 | `install <name|#N> [--from-registry] [--timeout <s>] [--force]` | 按 manifest 创建链接（幂等）；如果插件不在仓库里，自动回退到已配置的 `index.json` 源（或本地注册表）下载安装，并递归补装 `requires` 依赖；`#N` 直接引用 `search` 结果快照里的序号。安装前检测插件所属框架是否已装在服务器上，缺失则拒绝（`--force` 绕过）。 |
 | `uninstall <name>` | 删除工具创建的链接，保留仓库文件。 |
 | `enable <name> [--force]` / `disable <name> [--force]` | 创建/删除链接（同 install/uninstall）；`--force` 与 `install --force` 一致，可绕过框架检测。 |
@@ -340,6 +340,29 @@ API 版本直接从
 }
 ```
 
+**游戏内容包**（`kind: "content"`）不需要 `plugin_type`/`ini_lines`，它管理
+任意服务器文件（`cfg/`、`overrides/`、`gamedata/`、`addons/` …）并用 `roots`
+声明安装根：
+
+```json
+{
+  "kind": "content",
+  "name": "BotImprover",
+  "version": "1.4.5",
+  "roots": {
+    "addons": "game/csgo/addons",
+    "cfg": "game/csgo/cfg",
+    "overrides": "game/csgo/overrides"
+  },
+  "requires_frameworks": ["metamod", "css"],
+  "platform": "windows"
+}
+```
+
+内容包以**复制**方式安装到服务器（不是符号链接），`uninstall` 会把复制文件
+移入仓库 `trash/`；`requires_frameworks` 缺失时安装会被拒绝（`--force` 可
+绕过）；`platform` 与当前主机不匹配时导入/安装会警告。
+
 可选元数据（`pack` 时从 manifest 自动写入，`add --pkg` 时写回 manifest，
 保证发布往返不丢失信息）：
 
@@ -434,6 +457,25 @@ cs2lm add --pkg ./SimpleAdmin.cs2pkg
 cs2lm registry add SimpleAdmin https://.../SimpleAdmin.zip \
   --plugins SimpleAdmin,FunCommands,StealthModule
 cs2lm install SimpleAdmin --from-registry   # 添加全部 3 个，安装 SimpleAdmin
+```
+
+**多插件打包**：仓库里的多个插件可以导出成一个 `.cs2pkg`，`add --pkg` 再拆回：
+
+```bash
+cs2lm pack Alpha Beta --out ./releases/
+# -> releases/plugins.cs2pkg（cs2pkg.json 声明 plugins: ["Alpha", "Beta"]）
+
+cs2lm add --pkg ./releases/plugins.cs2pkg   # 在别的仓库里拆回 Alpha、Beta
+```
+
+**内容包管理**：把服务器上的 `cfg/`/`overrides/` 等游戏内容打包分发：
+
+```bash
+cs2lm add --pkg ./BotImprover.cs2pkg        # 导入内容包（类型显示为 content）
+cs2lm install BotImprover                    # 复制文件到服务器
+cs2lm install BotImprover --components cfg   # 只安装 cfg 根目录
+cs2lm uninstall BotImprover                  # 移除复制文件（进 trash）
+cs2lm pack BotImprover --out ./releases/     # 重新导出内容包
 ```
 
 **文件校验和**：每个纳入管理的文件都会在 manifest 里记录 `sha256`，为后续

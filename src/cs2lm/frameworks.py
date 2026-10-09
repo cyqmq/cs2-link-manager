@@ -17,6 +17,7 @@ alias (e.g. ``counterstrikesharp`` or ``cs#`` resolve to ``css``).
 """
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 FRAMEWORKS: tuple[dict, ...] = (
@@ -184,3 +185,21 @@ def require_framework_present(
             f"server (expected {root}). Install the framework first, or use "
             "--force to override."
         )
+
+
+def current_platform() -> str:
+    """Detect the current platform as ``windows`` or ``linux``."""
+    return "windows" if sys.platform.startswith("win") else "linux"
+
+
+def platform_matches(value: str | None) -> bool:
+    """Return ``True`` when a package's ``platform`` field fits this host.
+
+    ``None``/``""``/``"all"`` are compatible with every platform.
+    """
+    if not value:
+        return True
+    v = str(value).strip().lower()
+    if v in ("", "all", "any"):
+        return True
+    return v == current_platform()

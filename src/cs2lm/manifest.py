@@ -413,17 +413,18 @@ def _validate_no_core_overwrites(files: list[dict]) -> None:
                 )
 
 
-def split_css_plugins(
+def split_framework_plugins(
     source: str | Path,
     names: list[str],
     dest_base: str | Path,
+    framework: str = "css",
 ) -> list[tuple[str, Path]]:
-    """Split a multi-plugin CSS package into per-plugin ``addons/`` trees.
+    """Split a multi-plugin package into per-plugin ``addons/`` trees.
 
-    Given an extracted package root whose
-    ``addons/counterstrikesharp/plugins/`` contains several plugin
-    directories, build one ``addons/`` tree per plugin under ``dest_base``,
-    mirroring exactly what :func:`_collect_css_links` would link for a single
+    Works for every standard framework layout
+    (``addons/<root>/plugins/<Name>``): CSS, Swiftly, Plugify and ModSharp.
+    Builds one ``addons/`` tree per plugin under ``dest_base``, mirroring
+    exactly what :func:`_collect_framework_links` would link for a single
     plugin: ``plugins/<name>``, ``configs/plugins/<name>``,
     ``configs/<name>.*``, ``lang/<name>``, ``gamedata/<name>`` and
     ``gamedata/plugins/<name>`` (when present).  A ``shared/`` directory in
@@ -434,15 +435,20 @@ def split_css_plugins(
     Returns ``(name, source_dir)`` pairs that can be passed to
     :func:`add_plugin`.
     """
+    fw = normalize_framework(framework) or "css"
+    info = framework_info(fw)
+    if info is None:
+        raise ValueError(f"Unsupported framework for splitting: {framework}")
+    root_name = info["root"]
     src = Path(source)
     base = Path(dest_base)
-    css = src / "addons" / "counterstrikesharp"
-    if not css.is_dir():
+    fw_root = src / "addons" / root_name
+    if not fw_root.is_dir():
         raise ValueError(
-            "Package does not contain a CounterStrikeSharp addons/ tree; "
+            f"Package does not contain a {info['name']} addons/ tree; "
             "cannot split into plugins."
         )
-    plugins_dir = css / "plugins"
+    plugins_dir = fw_root / "plugins"
     if not plugins_dir.is_dir():
         raise ValueError("Package has no plugins/ directory to split.")
     available = sorted(p.name for p in plugins_dir.iterdir() if p.is_dir())
@@ -456,45 +462,45 @@ def split_css_plugins(
     results: list[tuple[str, Path]] = []
     for name in names:
         out = base / name
-        dest_css = out / "addons" / "counterstrikesharp"
-        shutil.copytree(plugins_dir / name, dest_css / "plugins" / name)
+        dest_fw = out / "addons" / root_name
+        shutil.copytree(plugins_dir / name, dest_fw / "plugins" / name)
 
-        cplugins = css / "configs" / "plugins"
+        cplugins = fw_root / "configs" / "plugins"
         if (cplugins / name).is_dir():
             shutil.copytree(
-                cplugins / name, dest_css / "configs" / "plugins" / name
+                cplugins / name, dest_fw / "configs" / "plugins" / name
             )
 
-        cfg_root = css / "configs"
+        cfg_root = fw_root / "configs"
         if cfg_root.is_dir():
             for child in sorted(cfg_root.iterdir()):
                 if child.name == "plugins":
                     continue
                 if child.name == name or child.name.startswith(name + "."):
-                    (dest_css / "configs").mkdir(parents=True, exist_ok=True)
+                    (dest_fw / "configs").mkdir(parents=True, exist_ok=True)
                     if child.is_dir():
-                        shutil.copytree(child, dest_css / "configs" / child.name)
+                        shutil.copytree(child, dest_fw / "configs" / child.name)
                     else:
-                        shutil.copy2(child, dest_css / "configs" / child.name)
+                        shutil.copy2(child, dest_fw / "configs" / child.name)
 
-        lang = css / "lang"
+        lang = fw_root / "lang"
         if (lang / name).is_dir():
-            shutil.copytree(lang / name, dest_css / "lang" / name)
+            shutil.copytree(lang / name, dest_fw / "lang" / name)
 
-        gamedata = css / "gamedata"
+        gamedata = fw_root / "gamedata"
         if (gamedata / name).exists():
-            (dest_css / "gamedata").mkdir(parents=True, exist_ok=True)
+            (dest_fw / "gamedata").mkdir(parents=True, exist_ok=True)
             if (gamedata / name).is_dir():
-                shutil.copytree(gamedata / name, dest_css / "gamedata" / name)
+                shutil.copytree(gamedata / name, dest_fw / "gamedata" / name)
             else:
-                shutil.copy2(gamedata / name, dest_css / "gamedata" / name)
+                shutil.copy2(gamedata / name, dest_fw / "gamedata" / name)
         if (gamedata / "plugins" / name).is_dir():
             shutil.copytree(
                 gamedata / "plugins" / name,
-                dest_css / "gamedata" / "plugins" / name,
+                dest_fw / "gamedata" / "plugins" / name,
             )
 
-        shared = css / "shared"
+        shared = fw_root / "shared"
         if shared.is_dir():
             print(
                 "Warning: this package contains a shared/ directory. Split "
@@ -504,6 +510,118 @@ def split_css_plugins(
             )
 
         results.append((name, out))
+    return results
+
+
+def split_css_plugins(
+    source: str | Path,
+    names: list[str],
+    dest_base: str | Path,
+) -> list[tuple[str, Path]]:
+    """Split a multi-plugin CSS package into per-plugin ``addons/`` trees.
+
+    Backwards-compatible wrapper around
+    :func:`split_framework_plugins` for the CounterStrikeSharp layout.
+    """
+    return split_framework_plugins(source, names, dest_base, framework="css")
+
+
+def split_metamod_addons(
+    source: str | Path,
+    names: list[str],
+    dest_base: str | Path,
+) -> list[tuple[str, Path]]:
+    """Split a multi-addon Metamod package into per-plugin ``addons/`` trees.
+
+    Metamod plugins live in top-level addon directories (``addons/<Name>/``
+    containing a ``bin/`` folder). Each requested addon is copied into its
+    own ``addons/`` tree under ``dest_base``.
+    """
+    src = Path(source)
+    base = Path(dest_base)
+    addons = src / "addons"
+    available: list[str] = []
+    if addons.is_dir():
+        for child in sorted(addons.iterdir()):
+            if child.is_dir() and (child / "bin").exists():
+                available.append(child.name)
+    missing = [n for n in names if n not in available]
+    if missing:
+        raise ValueError(
+            f"Metamod addon(s) not found in package: {', '.join(missing)}. "
+            f"Available: {', '.join(available)}."
+        )
+
+    results: list[tuple[str, Path]] = []
+    for name in names:
+        out = base / name
+        dest_addons = out / "addons"
+        shutil.copytree(addons / name, dest_addons / name)
+        results.append((name, out))
+    return results
+
+
+def _available_framework_plugins(src: Path) -> dict[str, str]:
+    """Map plugin names found in standard framework layouts to framework ids."""
+    found: dict[str, str] = {}
+    for fw_id in framework_ids():
+        info = framework_info(fw_id)
+        if info is None or info["plugin_rel"] is None:
+            continue
+        plugins_dir = src / "addons" / info["root"] / "plugins"
+        if plugins_dir.is_dir():
+            for child in sorted(plugins_dir.iterdir()):
+                if child.is_dir():
+                    found.setdefault(child.name, fw_id)
+    return found
+
+
+def _available_metamod_addons(src: Path) -> list[str]:
+    addons = src / "addons"
+    if not addons.is_dir():
+        return []
+    return sorted(
+        child.name
+        for child in addons.iterdir()
+        if child.is_dir() and (child / "bin").exists()
+    )
+
+
+def split_package_plugins(
+    source: str | Path,
+    names: list[str],
+    dest_base: str | Path,
+) -> list[tuple[str, Path]]:
+    """Split a mixed-framework package into per-plugin trees.
+
+    Supports standard framework plugins (``addons/<root>/plugins/<Name>``)
+    and Metamod addons (``addons/<Name>/bin``) in the same package. Each name
+    is routed to the splitter matching its layout.
+    """
+    src = Path(source)
+    base = Path(dest_base)
+    standard = _available_framework_plugins(src)
+    metamod = _available_metamod_addons(src)
+    missing = [n for n in names if n not in standard and n not in metamod]
+    if missing:
+        raise ValueError(
+            f"Plugin(s) not found in package: {', '.join(missing)}. "
+            f"Available standard plugins: {', '.join(sorted(standard)) or '(none)'}; "
+            f"available Metamod addons: {', '.join(metamod) or '(none)'}."
+        )
+
+    results: list[tuple[str, Path]] = []
+    by_fw: dict[str, list[str]] = {}
+    mm_names: list[str] = []
+    for n in names:
+        if n in standard:
+            by_fw.setdefault(standard[n], []).append(n)
+        else:
+            mm_names.append(n)
+    for fw, group in by_fw.items():
+        results.extend(split_framework_plugins(src, group, base, framework=fw))
+    if mm_names:
+        results.extend(split_metamod_addons(src, mm_names, base))
     return results
 
 
@@ -574,6 +692,15 @@ def add_plugin(
                 manifest["api_version"] = meta["api_version"]
             if meta.get("entry"):
                 manifest["entry"] = str(meta["entry"])
+            requires_fw = [
+                r
+                for r in (normalize_framework(x) for x in (meta.get("requires_frameworks") or []))
+                if r
+            ]
+            if requires_fw:
+                manifest["requires_frameworks"] = requires_fw
+            if meta.get("platform"):
+                manifest["platform"] = str(meta["platform"]).lower()
             pkg_deps = meta.get("dependencies")
             if isinstance(pkg_deps, dict):
                 for assembly, req in pkg_deps.items():
@@ -583,6 +710,152 @@ def add_plugin(
                 manifest["requires"] = dict(requires)
             elif isinstance(requires, (list, tuple)) and requires:
                 manifest["requires"] = [str(r) for r in requires]
+        save_manifest(repo, name, manifest)
+        return manifest
+    except Exception:
+        shutil.rmtree(pdir, ignore_errors=True)
+        raise
+
+
+# ---------------------------------------------------------------------------
+# Game-content packages (kind == "content")
+# ---------------------------------------------------------------------------
+
+def _resolve_content_roots(meta: dict, source_path: Path, csgo_rel: str) -> dict:
+    """Resolve a content package's ``roots`` mapping.
+
+    ``roots`` maps a package top-level entry to a server-root-relative
+    target (for example ``cfg -> game/csgo/cfg``). When the package declares
+    none, every top-level directory maps to ``<csgo_rel>/<dir>`` and a
+    ``game/`` directory maps to ``game``.
+    """
+    declared = meta.get("roots")
+    if isinstance(declared, dict) and declared:
+        roots: dict = {}
+        for key, value in declared.items():
+            k = str(key).strip("/")
+            v = str(value).replace("\\", "/").strip("/")
+            if k:
+                roots[k] = v
+        return roots
+    roots = {}
+    for child in sorted(source_path.iterdir()):
+        if child.name.startswith(".") or child.name.startswith("_"):
+            continue
+        if child.name == "game":
+            roots["game"] = "game"
+        else:
+            roots[child.name] = f"{csgo_rel}/{child.name}"
+    return roots
+
+
+def _copy_content_tree(source_path: Path, roots: dict, files_root: Path) -> None:
+    """Copy a content package into ``files/`` mirroring the server root."""
+    for root_name, rel_target in roots.items():
+        pkg_root = source_path / root_name
+        if not pkg_root.exists():
+            continue
+        dest = files_root / rel_target
+        if pkg_root.is_dir():
+            shutil.copytree(pkg_root, dest, dirs_exist_ok=True)
+        else:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(pkg_root, dest)
+
+
+def _content_target(source: str) -> str:
+    """Server-root-relative target for a content ``files/`` source path."""
+    return source.removeprefix("files/").lstrip("/")
+
+
+def _validate_no_core_targets(files: list[dict], csgo_rel: str) -> None:
+    """Reject content packages that try to manage core framework files."""
+    forbidden = (
+        f"{csgo_rel}/addons/counterstrikesharp/bin/",
+        f"{csgo_rel}/addons/counterstrikesharp/api/",
+        f"{csgo_rel}/addons/counterstrikesharp/dotnet/",
+        f"{csgo_rel}/addons/metamod/bin/",
+        f"{csgo_rel}/addons/counterstrikesharp/gamedata/gamedata.json",
+        f"{csgo_rel}/addons/metamod/metaplugins.ini",
+        f"{csgo_rel}/addons/metamod.vdf",
+        f"{csgo_rel}/addons/metamod_x64.vdf",
+    )
+    for entry in files:
+        target = entry.get("target", "").replace("\\", "/")
+        for prefix in forbidden:
+            if target.startswith(prefix):
+                raise ValueError(
+                    f"Content package contains core framework file '{target}'; "
+                    "refusing to manage core files."
+                )
+
+
+def add_content(
+    repo: str | Path,
+    name: str,
+    source: str | Path,
+    version: str | None = None,
+    meta: dict | None = None,
+) -> dict:
+    """Import a game-content mod (``kind == "content"``) into the repository.
+
+    Content packages have no plugin manifest, no ``plugin_type`` and no
+    framework binaries. They contain arbitrary server files (``cfg/``,
+    ``overrides/``, ``addons/``, ...) declared through a ``roots`` mapping.
+    Files are installed by copying them to the server (``kind: "copy"``)
+    so game/configuration files can be modified in place without touching the
+    repository copy.
+    """
+    source_path = Path(source).expanduser()
+    if not source_path.exists():
+        raise FileNotFoundError(f"Source not found: {source_path}")
+    name = sanitize_name(name)
+    pdir = plugin_dir(repo, name)
+    if pdir.exists():
+        raise FileExistsError(
+            f"Content package already exists in repository: {name}"
+        )
+    meta = meta or {}
+    cfg = _load_config(repo)
+    csgo_rel = cfg["csgo_rel"]
+    roots = _resolve_content_roots(meta, source_path, csgo_rel)
+    files_root = pdir / FILES_DIR
+    pdir.mkdir(parents=True, exist_ok=True)
+    try:
+        _copy_content_tree(source_path, roots, files_root)
+        files = _walk_files(files_root)
+        for entry in files:
+            entry["target"] = _content_target(entry["source"])
+        _validate_no_core_targets(files, csgo_rel)
+        requires_fw = [
+            r
+            for r in (normalize_framework(x) for x in (meta.get("requires_frameworks") or []))
+            if r
+        ]
+        manifest = {
+            "name": name,
+            "kind": "content",
+            "version": version or str(meta.get("version") or "1.0.0"),
+            "plugin_type": None,
+            "created_at": _now(),
+            "updated_at": _now(),
+            "enabled": True,
+            "imported": False,
+            "source_root": FILES_DIR,
+            "roots": roots,
+            "files": files,
+            "links": [
+                {"source": f["source"], "target": f["target"], "kind": "copy"}
+                for f in files
+            ],
+            "ini_lines": [],
+            "dependencies": {},
+            "requires_frameworks": requires_fw,
+            "platform": (meta.get("platform") or "all").lower(),
+        }
+        for field in ("author", "description", "license", "homepage", "repository"):
+            if meta.get(field):
+                manifest[field] = meta[field]
         save_manifest(repo, name, manifest)
         return manifest
     except Exception:

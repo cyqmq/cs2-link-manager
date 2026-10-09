@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **multi-plugin packaging**: `cs2lm pack Alpha Beta --out dir` exports several
+  repository plugins as one multi-plugin `.cs2pkg` (`plugins` list in
+  `cs2pkg.json`); `add --pkg` splits it back into separate entries. Mixed
+  packages (CSS/Swiftly/Plugify/ModSharp standard layouts + Metamod addons)
+  are split per framework.
+- **game-content packages** (`kind: "content"`): `.cs2pkg` packages can now
+  carry arbitrary server files (`cfg/`, `overrides/`, `gamedata/`, `addons/`)
+  with a `roots` mapping, `requires_frameworks` and `platform` fields.
+  `add --pkg` imports them as `content` entries; `install` copies files to the
+  server (uninstall moves them to trash); framework requirements are enforced
+  like plugins; `pack` re-exports the package layout. `install --components`
+  selects which roots to install.
+- **platform awareness**: `platform` (`windows`/`linux`/`all`) is validated on
+  import/install and a warning is printed on mismatch.
 - **index.json plugin sources**: `cs2lm source add/list/remove/clear` manage
   an ordered list of `index.json` sources (with per-source auth headers).
   `cs2lm update` now fetches every source (ETag/If-Modified-Since cached,

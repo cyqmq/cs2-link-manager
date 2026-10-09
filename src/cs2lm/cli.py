@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 import tempfile
@@ -78,8 +79,9 @@ def build_parser() -> argparse.ArgumentParser:
         "names inside the package to add as separate repository entries",
     )
 
-    p_pack = sub.add_parser("pack", help="Package a repository plugin as a .cs2pkg file")
-    p_pack.add_argument("name", help="Plugin name")
+    p_pack = sub.add_parser("pack", help="Package one or more repository plugins as a .cs2pkg file")
+    p_pack.add_argument("names", nargs="+", help="Plugin name(s); separate several names by spaces or commas for a multi-plugin package")
+    p_pack.add_argument("--name", default=None, help="Package label for a multi-plugin pack (default: first plugin name)")
     p_pack.add_argument("--out", default=".", help="Output directory or file path (default: current directory)")
 
     p_install = sub.add_parser("install", help="Install a plugin (from the repo, a source, or a catalog #N)")
@@ -89,6 +91,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_install.add_argument("--force", action="store_true", help="Force install with confirmation")
     p_install.add_argument("--yes", action="store_true", help="Skip confirmation when using --backup")
     p_install.add_argument("--timeout", type=int, default=None, help="Per-source HTTP timeout in seconds (default: config update.timeout)")
+    p_install.add_argument(
+        "--components",
+        default=None,
+        help="Content packages only: comma-separated root names to install "
+        "(e.g. cfg,addons). Omit to install everything.",
+    )
 
     p_uninstall = sub.add_parser("uninstall", help="Uninstall a plugin (remove links)")
     p_uninstall.add_argument("name")
@@ -96,6 +104,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_enable = sub.add_parser("enable", help="Enable a plugin (create links)")
     p_enable.add_argument("name")
     p_enable.add_argument("--force", action="store_true", help="Bypass the framework-presence guard (like install --force)")
+    p_enable.add_argument(
+        "--components",
+        default=None,
+        help="Content packages only: comma-separated root names to install "
+        "(e.g. cfg,addons). Omit to install everything.",
+    )
 
     p_disable = sub.add_parser("disable", help="Disable a plugin (remove links)")
     p_disable.add_argument("name")
@@ -232,7 +246,12 @@ def cmd_init(args: argparse.Namespace, logger: Logger) -> int:
 
 def cmd_add(args: argparse.Namespace, logger: Logger) -> int:
     from cs2lm.cs2pkg import extract_pkg
-    from cs2lm.manifest import add_plugin, split_css_plugins
+    from cs2lm.frameworks import platform_matches
+    from cs2lm.manifest import (
+        add_content,
+        add_plugin,
+        split_package_plugins,
+    )
     from cs2lm.url_add import (
         DownloadError,
         download_and_extract,
@@ -288,10 +307,22 @@ def cmd_add(args: argparse.Namespace, logger: Logger) -> int:
             return []
         return [v.strip() for v in value.split(",") if v.strip()]
 
+    def warn_platform(name: str, meta: dict | None) -> None:
+        """Warn when a package declares a platform different from this host."""
+        platform = (meta or {}).get("platform")
+        if platform and not platform_matches(platform):
+            from cs2lm.frameworks import current_platform
+
+            logger.warn(
+                "add",
+                f"WARNING: '{name}' declares platform '{platform}' but this "
+                f"host is {current_platform()}. It may not run here.",
+            )
+
     def add_split(names: list[str], source: str | Path, base: Path, meta: dict | None = None) -> list[dict]:
-        """Split a multi-plugin CSS package and add each plugin separately."""
+        """Split a multi-plugin package and add each plugin separately."""
         manifests = []
-        for name, src in split_css_plugins(source, names, base):
+        for name, src in split_package_plugins(source, names, base):
             manifests.append(
                 add_plugin(
                     args.repo,
@@ -302,6 +333,7 @@ def cmd_add(args: argparse.Namespace, logger: Logger) -> int:
                     meta=meta,
                 )
             )
+            warn_platform(name, meta)
         return manifests
 
     if args.url:
@@ -335,26 +367,42 @@ def cmd_add(args: argparse.Namespace, logger: Logger) -> int:
         with tempfile.TemporaryDirectory(prefix="cs2lm-pkg-") as tmp:
             tmp = Path(tmp)
             source, meta = extract_pkg(args.pkg, tmp)
-            type_hint = args.type or (meta or {}).get("plugin_type")
-            version = args.version or (meta or {}).get("version")
-            names = split_names(args.plugins) or (meta or {}).get("plugins") or []
-            if len(names) > 1:
-                manifests = add_split(names, source, tmp, meta)
-                logger.info("add", f"added {len(manifests)} plugins from package")
-                return 0
-            plugin_name = args.name or (names[0] if names else None) or (meta or {}).get("name")
-            if not plugin_name:
-                raise ValueError(
-                    "No plugin name given and cs2pkg.json does not provide one."
+            if (meta or {}).get("kind") == "content":
+                plugin_name = args.name or (meta or {}).get("name")
+                if not plugin_name:
+                    raise ValueError(
+                        "No content package name given and cs2pkg.json does "
+                        "not provide one."
+                    )
+                manifest = add_content(
+                    args.repo,
+                    plugin_name,
+                    source,
+                    version=args.version or (meta or {}).get("version"),
+                    meta=meta,
                 )
-            manifest = add_plugin(
-                args.repo,
-                plugin_name,
-                source,
-                type_hint=type_hint,
-                version=version,
-                meta=meta,
-            )
+                warn_platform(plugin_name, meta)
+            else:
+                type_hint = args.type or (meta or {}).get("plugin_type")
+                version = args.version or (meta or {}).get("version")
+                names = split_names(args.plugins) or (meta or {}).get("plugins") or []
+                if len(names) > 1:
+                    manifests = add_split(names, source, tmp, meta)
+                    logger.info("add", f"added {len(manifests)} plugins from package")
+                    return 0
+                plugin_name = args.name or (names[0] if names else None) or (meta or {}).get("name")
+                if not plugin_name:
+                    raise ValueError(
+                        "No plugin name given and cs2pkg.json does not provide one."
+                    )
+                manifest = add_plugin(
+                    args.repo,
+                    plugin_name,
+                    source,
+                    type_hint=type_hint,
+                    version=version,
+                    meta=meta,
+                )
     else:
         if args.plugins:
             names = split_names(args.plugins)
@@ -369,18 +417,35 @@ def cmd_add(args: argparse.Namespace, logger: Logger) -> int:
                 f"'{args.path}' is a .cs2pkg package. Use "
                 f"'cs2lm add --pkg {args.path}' to import it (or pass --pkg)."
             )
-        manifest = add_plugin(
-            args.repo,
-            args.name,
-            args.path,
-            type_hint=args.type,
-            version=args.version,
-        )
-        warn_if_empty(args.name, args.path)
+        pkg_meta_path = Path(args.path) / "cs2pkg.json"
+        local_meta = None
+        if pkg_meta_path.is_file():
+            try:
+                local_meta = json.loads(pkg_meta_path.read_text(encoding="utf-8-sig"))
+            except json.JSONDecodeError:
+                local_meta = None
+        if (local_meta or {}).get("kind") == "content":
+            manifest = add_content(
+                args.repo,
+                args.name,
+                args.path,
+                version=args.version or (local_meta or {}).get("version"),
+                meta=local_meta,
+            )
+            warn_platform(args.name, local_meta)
+        else:
+            manifest = add_plugin(
+                args.repo,
+                args.name,
+                args.path,
+                type_hint=args.type,
+                version=args.version,
+            )
+            warn_if_empty(args.name, args.path)
     logger.info(
         "add",
         f"added plugin '{manifest['name']}'",
-        type=manifest["plugin_type"],
+        type=manifest.get("plugin_type") or manifest.get("kind"),
         files=len(manifest["files"]),
         links=len(manifest["links"]),
     )
@@ -390,6 +455,11 @@ def cmd_add(args: argparse.Namespace, logger: Logger) -> int:
 def cmd_install(args: argparse.Namespace, logger: Logger) -> int:
     from cs2lm.catalog import install_plugin
 
+    components = (
+        [c.strip() for c in args.components.split(",") if c.strip()]
+        if args.components
+        else None
+    )
     result = install_plugin(
         args.repo,
         args.name,
@@ -399,6 +469,7 @@ def cmd_install(args: argparse.Namespace, logger: Logger) -> int:
         yes=args.yes,
         timeout=args.timeout,
         from_registry=args.from_registry,
+        components=components,
         logger=logger,
     )
     for message in result["messages"]:
@@ -413,10 +484,15 @@ def cmd_uninstall(args: argparse.Namespace, logger: Logger) -> int:
 
 
 def cmd_enable(args: argparse.Namespace, logger: Logger) -> int:
+    components = (
+        [c.strip() for c in args.components.split(",") if c.strip()]
+        if args.components
+        else None
+    )
     manager = PluginManager(
         args.repo, dry_run=args.dry_run, force=args.force, logger=logger
     )
-    manager.enable(args.name)
+    manager.enable(args.name, components=components)
     return 0
 
 
@@ -486,9 +562,17 @@ def cmd_import(args: argparse.Namespace, logger: Logger) -> int:
 def cmd_pack(args: argparse.Namespace, logger: Logger) -> int:
     from cs2lm.cs2pkg import build_pkg
 
-    out = build_pkg(args.repo, args.name, args.out)
-    logger.info("pack", f"packaged plugin '{args.name}'", out=str(out))
-    print(f"Packaged '{args.name}' -> {out}")
+    names: list[str] = []
+    for value in args.names:
+        names.extend(n.strip() for n in value.split(",") if n.strip())
+    names = list(dict.fromkeys(names))
+    out = build_pkg(args.repo, names, args.out, pack_name=args.name)
+    if len(names) == 1:
+        label = f"'{names[0]}'"
+    else:
+        label = args.name or f"{len(names)} plugins"
+    logger.info("pack", f"packaged plugin(s) {', '.join(names)}", out=str(out))
+    print(f"Packaged {label} -> {out}")
     return 0
 
 

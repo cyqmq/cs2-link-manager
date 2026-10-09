@@ -1,10 +1,19 @@
 # .cs2pkg 插件包格式规范
 
-`.cs2pkg` 是 cs2-link-manager 的标准插件分发格式：一个 **zip 归档**，内含
-`cs2pkg.json`（包元数据）和一棵镜像服务器布局的 `addons/` 文件树。
+`.cs2pkg` 是 cs2-link-manager 的标准分发格式：一个 **zip 归档**，内含
+`cs2pkg.json`（包元数据）和一棵镜像服务器布局的文件树。
 
 插件作者打包发布 → 服主 `add --pkg` 一键导入 → 符号链接部署到服务器，
 `pack` / `add --pkg` 往返不丢失元数据。
+
+支持两类包：
+
+* **插件包**（默认）：`addons/` 文件树 + `plugin_type`，一个仓库条目 = 一个插件；
+* **游戏内容包**（`kind: "content"`）：任意服务器文件（`cfg/`、`overrides/`、
+  `gamedata/`、`addons/` …），通过 `roots` 声明安装根，没有 `plugin_type`。
+
+`pack` 还支持把多个仓库插件打包成**一个多插件包**（`cs2lm pack A B --out dir`），
+`add --pkg` 会自动按 `plugins` 列表拆分回多个仓库条目。
 
 ---
 
@@ -31,10 +40,15 @@ MyPlugin.cs2pkg
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| `name` | 字符串 | 是 | 插件名（`add --pkg` 省略名称时使用它）。 |
+| `name` | 字符串 | 是 | 插件/内容包名（`add --pkg` 省略名称时使用它）。 |
 | `version` | 字符串 | 是 | 语义化版本，如 `1.2.3`。 |
-| `plugin_type` | 字符串 | 是 | `css` 或 `metamod`。 |
-| `ini_lines` | 字符串数组 | 是 | Metamod 插件需要写入 `metaplugins.ini` 的行；CSS 插件为空数组。 |
+| `kind` | 字符串 | 否 | `plugin`（默认）或 `content`（游戏内容包）。 |
+| `plugin_type` | 字符串 | 插件包必填 | `css` / `metamod` / `swiftly` / `plugify` / `modsharp`。内容包不需要。 |
+| `ini_lines` | 字符串数组 | 插件包必填 | Metamod 插件需要写入 `metaplugins.ini` 的行；CSS 插件为空数组。内容包不需要。 |
+| `plugins` | 字符串数组 | 否 | 多插件包里要拆分的插件目录名列表。 |
+| `roots` | 对象 | 内容包推荐 | 内容包的安装根映射：包内顶层目录 → 服务器根相对路径。 |
+| `requires_frameworks` | 字符串数组 | 否 | 需要的框架 id（如 `["metamod", "css"]`），安装时检查服务器是否已装。 |
+| `platform` | 字符串 | 否 | `windows` / `linux` / `all`（默认 `all`）。安装时若与当前主机不匹配会警告。 |
 | `author` | 字符串 | 否 | 作者。 |
 | `description` | 字符串 | 否 | 简介。 |
 | `license` | 字符串 | 否 | 许可证。 |
@@ -42,11 +56,10 @@ MyPlugin.cs2pkg
 | `repository` | 字符串 | 否 | 源码仓库。 |
 | `dependencies` | 对象 | 否 | 程序集级依赖，`{程序集名: 版本约束}`。 |
 | `requires` | 字符串数组 或 对象 | 否 | 插件级依赖（见下文）。 |
-| `plugins` | 字符串数组 | 否 | 多插件包里要拆分的插件目录名列表。 |
 | `api_version` | 整数 | 否 | 插件 API 版本（仅冗余，权威值在包内 `manifest.json`）。 |
 | `entry` | 字符串 | 否 | 插件入口（仅冗余，权威值在包内 `manifest.json`）。 |
 
-最小示例：
+最小插件包示例：
 
 ```json
 {
@@ -56,6 +69,34 @@ MyPlugin.cs2pkg
   "ini_lines": []
 }
 ```
+
+最小内容包示例：
+
+```json
+{
+  "kind": "content",
+  "name": "BotImprover",
+  "version": "1.4.5",
+  "roots": {
+    "addons": "game/csgo/addons",
+    "cfg": "game/csgo/cfg",
+    "overrides": "game/csgo/overrides"
+  },
+  "requires_frameworks": ["metamod", "css"],
+  "platform": "windows"
+}
+```
+
+`roots` 的值是**服务器根相对路径**（相对 `<server>/game`）：
+
+* `"cfg": "game/csgo/cfg"` → 包内 `cfg/xxx` 安装到 `<server>/game/csgo/cfg/xxx`；
+* `"game": "game"` → 包内 `game/csgo/...` 安装到 `<server>/game/csgo/...`（用于
+  `gameinfo.gi` 等位于 csgo 根的文件）。
+
+未声明 `roots` 时，内容包的每个顶层目录默认映射到 `game/csgo/<目录名>`，
+`game/` 目录映射到 `game`。内容包**不能**包含框架核心文件（CSS 的
+`api/`/`bin/`/`dotnet/`、Metamod 的 `bin/`/`.vdf`/`metaplugins.ini` 等），
+导入时会拒绝。
 
 ## 三、插件级依赖（requires）
 
@@ -96,7 +137,46 @@ SimpleAdmin + FunCommands + StealthModule 三个插件目录），在 `plugins` 
 
 只有单个插件时无需声明 `plugins`。
 
-## 五、与 manifest.json / index.json 的关系
+### 多插件打包（pack A B C）
+
+`cs2lm pack PluginA PluginB --out releases/` 会把多个仓库插件合并成一个
+多插件 `.cs2pkg`：
+
+```json
+{
+  "name": "plugins",
+  "version": "1.0.0",
+  "plugin_type": "css",
+  "plugins": ["PluginA", "PluginB"]
+}
+```
+
+* `plugins` 列出包内所有插件目录名，`add --pkg` 导入时会按第四节规则拆回；
+* `requires` / `dependencies` **不会**在多插件包里合并（依赖是插件级的），
+  需要依赖的插件请分别发布单插件包或在包内用 `manifest.json` 声明；
+* 单插件 `pack` 行为不变（不写 `plugins` 字段）。
+
+## 五、游戏内容包（kind: content）
+
+游戏内容 mod（如 CS2-Bot-Improver 这类全家桶）没有插件清单，也不属于单一框架。
+它们包含 `cfg/`、`overrides/`、`gamedata/`、`addons/` 甚至 `gameinfo.gi` 等
+任意服务器文件。以 `kind: "content"` 打包后可被 cs2-link-manager 管理：
+
+* `add --pkg file.cs2pkg` 导入仓库（`list` 显示类型为 `content`）；
+* `install` 把文件**复制**到服务器（不是符号链接），服务器运行时的修改不会
+  污染仓库副本；`uninstall` 把复制过去的文件移到仓库 `trash/`；
+* `requires_frameworks` 声明需要的框架，安装时若服务器缺失会拒绝（`--force`
+  可绕过）；
+* `platform` 声明目标平台（`windows`/`linux`/`all`），与当前主机不匹配时
+  安装/导入会警告；
+* `install --components cfg,addons` 可只安装部分根目录（按 `roots` 的键名
+  选择），未指定时安装全部；
+* `pack` 导出内容包时按 `roots` 恢复包内顶层布局（`cfg/`、`overrides/` …）。
+
+内容包**不接受**框架核心文件（CSS `api/`/`bin/`/`dotnet/`、Metamod
+`bin/`/`.vdf`/`metaplugins.ini`、`gamedata.json`），导入时拒绝。
+
+## 六、与 manifest.json / index.json 的关系
 
 三种文件各司其职：
 
@@ -116,7 +196,7 @@ SimpleAdmin + FunCommands + StealthModule 三个插件目录），在 `plugins` 
   `version` 与 `index.json` 条目一致，不一致则拒绝；
 * 未更新的插件可以继续指回旧 Release 的 zip，实现增量发布。
 
-## 六、版本与校验
+## 七、版本与校验
 
 * `version` 遵循 SemVer 2.0；`add` 时会尝试从 `<Name>.deps.json` 的
   `targets` 里自动提取 `<Name>/<version>` 作为默认版本（如 `Retakes/3.1.1`），

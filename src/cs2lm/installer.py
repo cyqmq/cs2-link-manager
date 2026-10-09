@@ -105,11 +105,20 @@ class PluginManager:
 
     # -- install ------------------------------------------------------------
 
-    def install(self, name: str) -> None:
-        """Install a plugin, auto-installing any required plugins first."""
-        self._install_with_deps(name, set())
+    def install(self, name: str, components: list[str] | None = None) -> None:
+        """Install a plugin, auto-installing any required plugins first.
 
-    def _install_with_deps(self, name: str, seen: set[str]) -> None:
+        ``components`` optionally limits a content package install to the
+        given root names (for example ``["cfg", "addons"]``).
+        """
+        self._install_with_deps(name, set(), components=components)
+
+    def _install_with_deps(
+        self,
+        name: str,
+        seen: set[str],
+        components: list[str] | None = None,
+    ) -> None:
         if name in seen:
             raise InstallError(
                 "Dependency cycle detected: "
@@ -129,25 +138,48 @@ class PluginManager:
             if not self.plugin_has_links(dep):
                 self.logger.info("install", f"{name}: installing dependency {dep}")
                 self._install_with_deps(dep, seen)
-        self._install_plugin(name)
+        self._install_plugin(name, components=components)
 
-    def _install_plugin(self, name: str) -> None:
+    def _install_plugin(self, name: str, components: list[str] | None = None) -> None:
         manifest = load_manifest(self.repo, name)
         if not self.force:
             from cs2lm.frameworks import FrameworkMissingError, require_framework_present
 
+            reqs: list[str] = list(manifest.get("requires_frameworks") or [])
+            if manifest.get("kind") != "content":
+                plugin_type = manifest.get("plugin_type", "")
+                if plugin_type and plugin_type not in reqs:
+                    reqs.append(plugin_type)
             try:
-                require_framework_present(
-                    self.server,
-                    self.csgo_rel,
-                    manifest.get("plugin_type", ""),
-                )
+                for fw in reqs:
+                    require_framework_present(
+                        self.server,
+                        self.csgo_rel,
+                        fw,
+                    )
             except FrameworkMissingError as exc:
                 raise InstallError(str(exc)) from exc
+        from cs2lm.frameworks import current_platform, platform_matches
+
+        platform = manifest.get("platform")
+        if platform and not platform_matches(platform):
+            self.logger.warn(
+                "install",
+                f"WARNING: '{name}' targets platform '{platform}' but this "
+                f"host is {current_platform()}.",
+            )
         state = self._load_state()
         created: list[dict] = []
         try:
-            for link in manifest.get("links", []):
+            links = manifest.get("links", [])
+            if components and manifest.get("kind") == "content":
+                prefixes = _component_target_prefixes(manifest, components)
+                links = [
+                    link
+                    for link in links
+                    if _target_belongs_to(link.get("target", ""), prefixes)
+                ]
+            for link in links:
                 if self._state_has_link(state, name, link):
                     self.logger.info(
                         "install",
@@ -304,8 +336,8 @@ class PluginManager:
             self._save_state(state)
         self.logger.info("uninstall", f"uninstalled {name}")
 
-    def enable(self, name: str) -> None:
-        self.install(name)
+    def enable(self, name: str, components: list[str] | None = None) -> None:
+        self.install(name, components=components)
 
     def disable(self, name: str) -> None:
         self.uninstall(name)
@@ -378,10 +410,16 @@ class PluginManager:
         for name in list_plugins(self.repo):
             manifest = load_manifest(self.repo, name)
             installed = bool(self._state_links_for(state, name))
+            kind = manifest.get("kind")
+            type_label = (
+                "content"
+                if kind == "content"
+                else manifest.get("plugin_type", "?")
+            )
             result.append(
                 {
                     "name": name,
-                    "type": manifest.get("plugin_type", "?"),
+                    "type": type_label,
                     "version": manifest.get("version", "?"),
                     "enabled": bool(manifest.get("enabled")),
                     "installed": installed,
@@ -394,3 +432,27 @@ def _now() -> str:
     from datetime import datetime, timezone
 
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _component_target_prefixes(manifest: dict, components: list[str]) -> set[str]:
+    """Resolve component/root names to server-relative target prefixes."""
+    roots = manifest.get("roots") or {}
+    prefixes: set[str] = set()
+    for comp in components:
+        comp = str(comp).strip()
+        if not comp:
+            continue
+        if comp in roots:
+            prefixes.add(str(roots[comp]).strip("/") + "/")
+        else:
+            prefixes.add(comp.replace("\\", "/").strip("/") + "/")
+    return prefixes
+
+
+def _target_belongs_to(target: str, prefixes: set[str]) -> bool:
+    t = target.replace("\\", "/").lstrip("/")
+    for prefix in prefixes:
+        p = prefix.lstrip("/")
+        if t == p.rstrip("/") or t.startswith(p):
+            return True
+    return False

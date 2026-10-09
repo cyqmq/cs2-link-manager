@@ -58,3 +58,18 @@ Status: [x] done, [~] in progress, [ ] planned.
 
 ## Docs
 - [x] README/CHANGELOG updates for each behavior change.
+
+## Feature request — 全家桶/整合包（CS2-Bot-Improver 等）
+- [x] Short-term: multi-plugin packaging. `pack` accepts multiple names and
+      produces one multi-plugin `.cs2pkg` (`plugins` field), round-trips via
+      `add --pkg`.
+- [x] Long-term: game-content packages. `.cs2pkg` gains `kind: "content"`,
+      `roots` (multi-root: `cfg/`, `overrides/`, `addons/`, `game/`),
+      `requires_frameworks` and `platform`. Content entries install by copy,
+      uninstall to trash, and are shown as `content` in `list`.
+- [x] Selective installation: `install --components cfg,addons` installs only
+      the chosen content roots.
+- [x] Mixed-framework splitting: `split_package_plugins` routes standard
+      framework plugins and Metamod addons per-framework.
+- [x] Platform awareness: `platform` mismatch warns on import/install.
+- [x] Tests + docs for all of the above.
