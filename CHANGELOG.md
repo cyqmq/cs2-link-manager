@@ -117,6 +117,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **README**: documents the registry, URL subdirs, package metadata,
   multi-plugin rejection, the update workflow, dependency management and
   checksum verification.
+- **remove/trash commands**: `cs2lm remove <name>` uninstalls and moves a
+  plugin to `trash/plugins/`; `cs2lm trash list` / `trash restore <name>`
+  list and restore trashed plugins.
+- **update --force**: `cs2lm update --force` bypasses the framework-presence
+  guard when relinking updated plugins.
+- **enable/disable --force**: both commands accept `--force` with the same
+  semantics as `install --force`.
+- **source add validation**: `source add` fetches and validates `index.json`
+  (schema + `plugins` object) before saving, so a bad URL fails immediately.
+- **registry add reachability probe**: a HEAD probe warns (but still saves)
+  when the registry URL is unreachable.
+- **doctor --verbose on subcommand**: `cs2lm doctor --verbose` works as the
+  README documents (subcommand flag, not only a global flag).
+- **add UX guards**: passing a `.cs2pkg` path to `add <name> <path>` suggests
+  `--pkg`; packages with no `addons/` tree or binaries warn; zip packages
+  without `manifest.json`/`cs2pkg.json` warn when the version defaults to
+  `1.0.0` and suggest `--version`.
+- **auth-free health probe**: `GET /api/health` no longer requires the auth
+  token, so wrapper scripts can use it as a true readiness probe.
 
 ### Changed
 
@@ -131,9 +150,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **requires**: dependency declarations may be an object
   (`{"DepLib": ">=1.0.0"}`) as well as a plain list of plugin names; the
   installer accepts both.
+- **catalog status**: `search` now distinguishes `已装(version)` (linked
+  to the server) from `仓库(version,未链接)` (repo-only, not enabled), so
+  a half-updated plugin is no longer shown as "installed".
+- **framework detection**: marker-less frameworks (swiftly/plugify/modsharp)
+  are only reported installed when their root contains framework-owned files
+  beyond `plugins`/`configs`; plugin links created by a `--force` install no
+  longer make the framework look installed.
+- **update atomicity**: the framework guard runs *before* the atomic swap,
+  and a failed relink rolls back the previous version (`.old` is kept until
+  success), so a blocked/failed update never leaves a half-updated manifest.
 
 ### Fixed
 
+- **install --force on the source path**: `--force` is forwarded through
+  `install_from_index_with_deps()` / `install_plugin_from_index()`, so
+  `install <name> --force` and `install #N --force` both bypass the
+  framework guard even when the plugin is not yet in the repository.
+- **update half-updated state**: when the framework is missing, `update`
+  now refuses *before* touching the repository (old version + links stay
+  intact), instead of swapping the directory and then failing to relink.
+- **web port validation**: `--port` outside 0-65535 prints a friendly
+  `error:` message instead of an `OverflowError` traceback; `run_webui` also
+  converts `OverflowError` to `ValueError`.
+- **unwritable --log path**: logger creation moved inside the guarded error
+  block, so an unwritable log file becomes `error: ...` instead of a raw
+  traceback.
+- **daemon stdout buffering**: the daemon child runs `python -u`, so
+  `CS2LM_READY port=...` is flushed to `--daemon-log` immediately.
+- **daemon readiness confirmation**: `web --daemon` waits until the child is
+  genuinely listening (probes `/api/health` or parses the log's actual port);
+  on failure it returns non-zero and does not write a misleading pidfile.
+- **web --port 0**: prints the *actual* bound port in the URL and
+  `CS2LM_READY port=...`, matching the documented readiness contract.
+- **corrupted manifest**: `load_manifest` wraps `JSONDecodeError` in a clear
+  error naming the plugin and manifest path.
 - **split multi-plugin packages**: `split_css_plugins` no longer assumes a
   `configs/` directory exists. Packages that only ship `plugins/` +
   `shared/` (e.g. the official CS2-SimpleAdmin release) now split without

@@ -228,6 +228,7 @@ def install_plugin_from_index(
     dry_run: bool = False,
     manager=None,
     logger: Logger | None = None,
+    force: bool = False,
 ) -> dict:
     """Download, verify and add a plugin that is missing locally."""
     logger = logger or Logger()
@@ -262,7 +263,7 @@ def install_plugin_from_index(
                 version=entry.get("version"),
                 meta=entry,
             )
-        manager = manager or PluginManager(repo, logger=logger)
+        manager = manager or PluginManager(repo, force=force, logger=logger)
         manager.install(name)
         _log_update(
             repo,
@@ -293,13 +294,15 @@ def update_plugin(
     entry: dict,
     dry_run: bool = False,
     yes: bool = False,
+    force: bool = False,
     logger: Logger | None = None,
 ) -> dict:
     """Update one plugin from its index/registry entry.
 
     Returns a report dict with ``status`` in
     ``{"up-to-date", "changed", "aborted", "not-in-repo", "error"}``.
-    ``dry_run`` only reports; ``yes`` skips the confirmation prompt.
+    ``dry_run`` only reports; ``yes`` skips the confirmation prompt;
+    ``force`` bypasses the framework-presence guard during relinking.
     """
     logger = logger or Logger()
     pdir = plugin_dir(repo, name)
@@ -396,18 +399,52 @@ def update_plugin(
                 logger.info("update", f"{name}: aborted by user")
                 return {"name": name, "status": "aborted"}
 
-            _atomic_replace(repo, name, build_repo, tmp_path)
-
+            # Check framework presence *before* swapping anything. This only
+            # applies when the plugin is currently linked and the update
+            # will relink it — a disabled (unlinked) plugin can update its
+            # repo files freely. `--force` bypasses this guard.
             from cs2lm.installer import PluginManager
 
-            manager = PluginManager(repo, logger=logger)
+            manager = PluginManager(repo, force=force, logger=logger)
             was_installed = manager.plugin_has_links(name)
+            if was_installed and not force:
+                from cs2lm.config import load_config
+                from cs2lm.frameworks import (
+                    FrameworkMissingError,
+                    require_framework_present,
+                )
+
+                cfg = load_config(repo)
+                try:
+                    require_framework_present(
+                        cfg["server_path"],
+                        cfg.get("csgo_rel", "game/csgo"),
+                        new_manifest.get("plugin_type", ""),
+                    )
+                except FrameworkMissingError as exc:
+                    logger.error("update", f"{name}: update blocked: {exc}")
+                    return {
+                        "name": name,
+                        "status": "error",
+                        "message": str(exc),
+                        "blocked_before_replace": True,
+                    }
+
+            _atomic_replace(repo, name, build_repo, tmp_path)
+
             if was_installed:
-                manager.uninstall(name)
-                manager.install(name)
-                report["reinstalled"] = True
+                try:
+                    manager.uninstall(name)
+                    manager.install(name)
+                    report["reinstalled"] = True
+                except Exception:
+                    # The swap already happened; restore the previous version
+                    # so no half-updated state remains on disk.
+                    _atomic_rollback(repo, name)
+                    raise
             else:
                 report["reinstalled"] = False
+            _atomic_finalize(repo, name)
 
             _log_update(
                 repo,
@@ -444,8 +481,10 @@ def _atomic_replace(
     """Swap ``plugins/<name>`` with the freshly built package.
 
     The new directory is copied to ``.<name>.new``, the live directory is
-    renamed to ``.<name>.old``, the staging directory is renamed into place,
-    and ``.old`` is removed.  A failed swap rolls back from ``.old``.
+    renamed to ``.<name>.old``, and the staging directory is renamed into
+    place. ``.old`` is deliberately kept until the caller confirms the new
+    version was linked successfully (:func:`_atomic_finalize`), so a failed
+    relink can be rolled back with :func:`_atomic_rollback`.
     """
     plugins_root = plugin_dir(repo, name).parent
     staging = plugins_root / f".{name}.new"
@@ -464,7 +503,24 @@ def _atomic_replace(
         old_dir.rename(pdir)
         shutil.rmtree(staging, ignore_errors=True)
         raise
-    shutil.rmtree(old_dir, ignore_errors=True)
+
+
+def _atomic_rollback(repo: str | Path, name: str) -> None:
+    """Restore ``.<name>.old`` as the live plugin directory."""
+    plugins_root = plugin_dir(repo, name).parent
+    pdir = plugin_dir(repo, name)
+    old_dir = plugins_root / f".{name}.old"
+    if not old_dir.is_dir():
+        return
+    shutil.rmtree(pdir, ignore_errors=True)
+    old_dir.rename(pdir)
+    shutil.rmtree(plugins_root / f".{name}.new", ignore_errors=True)
+
+
+def _atomic_finalize(repo: str | Path, name: str) -> None:
+    """Drop the kept ``.<name>.old`` backup after a successful relink."""
+    plugins_root = plugin_dir(repo, name).parent
+    shutil.rmtree(plugins_root / f".{name}.old", ignore_errors=True)
 
 
 # ---------------------------------------------------------------------------
@@ -522,6 +578,7 @@ def plan_and_apply_update(
     *,
     dry_run: bool = True,
     yes: bool = True,
+    force: bool = False,
     remove_orphans: bool = False,
     timeout: int | None = None,
     api_version_range: tuple[int, int] | None = None,
@@ -593,6 +650,7 @@ def plan_and_apply_update(
             merged[plugin],
             dry_run=dry_run,
             yes=yes,
+            force=force,
             logger=logger,
         )
 

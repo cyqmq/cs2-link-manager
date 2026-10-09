@@ -378,13 +378,8 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):  # noqa: N802
         parsed = urllib.parse.urlparse(self.path)
-        token = self._request_token()
-        if not self._authorized(token):
-            if parsed.path == "/":
-                self._send_html(_render_login(), status=401)
-            else:
-                self._send_json({"status": "unauthorized"}, status=401)
-            return
+        # Readiness probe: deliberately auth-free so wrapper scripts can use it
+        # as a health check without knowing the token.
         if parsed.path == "/api/health":
             self._send_json(
                 {
@@ -394,6 +389,13 @@ class _Handler(BaseHTTPRequestHandler):
                     "auth": bool(getattr(self.server, "auth_token", None)),
                 }
             )
+            return
+        token = self._request_token()
+        if not self._authorized(token):
+            if parsed.path == "/":
+                self._send_html(_render_login(), status=401)
+            else:
+                self._send_json({"status": "unauthorized"}, status=401)
             return
         if parsed.path == "/api/status":
             self._send_json(_server_status(self.server.repo))
@@ -505,11 +507,15 @@ class _Handler(BaseHTTPRequestHandler):
 
 def run_webui(repo: str | Path, host: str = "127.0.0.1", port: int = 8080, auth_token: str | None = None) -> None:
     """Start the web UI. Blocks until interrupted (Ctrl+C / SIGTERM)."""
-    server = ThreadingHTTPServer((host, port), _Handler)
+    try:
+        server = ThreadingHTTPServer((host, port), _Handler)
+    except OverflowError as exc:
+        raise ValueError(f"Invalid port: {port}. Port must be between 0 and 65535.") from exc
     server.repo = str(Path(repo).resolve())
     server.auth_token = auth_token
-    print(f"cs2-link-manager Web UI at http://{host}:{port}/  (Ctrl+C to stop)")
-    print(f"CS2LM_READY port={port} auth={'required' if auth_token else 'none'}")
+    actual_port = server.server_address[1]
+    print(f"cs2-link-manager Web UI at http://{host}:{actual_port}/  (Ctrl+C to stop)")
+    print(f"CS2LM_READY port={actual_port} auth={'required' if auth_token else 'none'}")
     if auth_token:
         print("Authentication required (--auth-token).")
 

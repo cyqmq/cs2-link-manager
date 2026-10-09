@@ -74,7 +74,14 @@ def load_manifest(repo: str | Path, name: str) -> dict:
     p = plugin_dir(repo, name) / MANIFEST_FILENAME
     if not p.exists():
         raise FileNotFoundError(f"Plugin not found in repository: {name}")
-    return json.loads(p.read_text(encoding="utf-8-sig"))
+    try:
+        return json.loads(p.read_text(encoding="utf-8-sig"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"Invalid manifest for plugin '{name}' at {p}: {exc.msg} "
+            f"(line {exc.lineno}, column {exc.colno}). Re-add the plugin or "
+            "restore this file from a backup."
+        ) from exc
 
 
 def save_manifest(repo: str | Path, name: str, manifest: dict) -> None:

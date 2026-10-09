@@ -14,6 +14,7 @@ awesome-cs2 manifest lists) can be exported/imported into it.
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 REGISTRY_FILENAME = "registry.json"
@@ -43,6 +44,28 @@ def save_registry(repo: str | Path, data: dict) -> None:
     )
 
 
+def _warn_if_unreachable(url: str) -> None:
+    """Best-effort HEAD probe; print a warning when the URL is unreachable."""
+    import urllib.error
+    import urllib.request
+
+    try:
+        req = urllib.request.Request(url, method="HEAD")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            if 200 <= resp.status < 400:
+                return
+        print(
+            f"Warning: {url} returned HTTP {resp.status}.",
+            file=sys.stderr,
+        )
+    except Exception as exc:  # noqa: BLE001 - best-effort probe
+        print(
+            f"Warning: {url} appears unreachable ({exc}). The entry was "
+            "saved anyway; remove it with 'cs2lm registry remove'.",
+            file=sys.stderr,
+        )
+
+
 def registry_add(
     repo: str | Path,
     name: str,
@@ -59,6 +82,7 @@ def registry_add(
         raise ValueError("Registry entry name cannot be empty")
     if not url:
         raise ValueError("Registry entry URL cannot be empty")
+    _warn_if_unreachable(url)
     entry = {
         "url": url,
         "description": description,

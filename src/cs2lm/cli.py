@@ -95,13 +95,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_enable = sub.add_parser("enable", help="Enable a plugin (create links)")
     p_enable.add_argument("name")
+    p_enable.add_argument("--force", action="store_true", help="Bypass the framework-presence guard (like install --force)")
 
     p_disable = sub.add_parser("disable", help="Disable a plugin (remove links)")
     p_disable.add_argument("name")
+    p_disable.add_argument("--force", action="store_true", help="Bypass safety checks when removing links")
 
     p_list = sub.add_parser("list", help="List plugins in the repository")
 
     p_doctor = sub.add_parser("doctor", help="Run diagnostics")
+    p_doctor.add_argument("--verbose", action="store_true", help="Verbose console output")
 
     p_import = sub.add_parser("import", help="Import an installed plugin back into the repo")
     p_import.add_argument("name")
@@ -118,13 +121,22 @@ def build_parser() -> argparse.ArgumentParser:
     p_profile = sub.add_parser("profile", help="Manage profiles")
     p_profile_sub = p_profile.add_subparsers(dest="profile_command", required=True)
     p_profile_create = p_profile_sub.add_parser("create", help="Create a profile")
-    p_profile_create.add_argument("name")
+    p_profile_create.add_argument("name", nargs="?", help="Profile name")
     p_profile_create.add_argument("plugins", nargs="*", help="Plugin names in the profile")
     p_profile_use = p_profile_sub.add_parser("use", help="Switch to a profile")
     p_profile_use.add_argument("name")
     p_profile_list = p_profile_sub.add_parser("list", help="List profiles")
     p_profile_delete = p_profile_sub.add_parser("delete", help="Delete a profile")
     p_profile_delete.add_argument("name")
+
+    p_remove = sub.add_parser("remove", help="Remove a plugin from the repository (moves it to trash)")
+    p_remove.add_argument("name")
+
+    p_trash = sub.add_parser("trash", help="Manage trashed plugins")
+    p_trash_sub = p_trash.add_subparsers(dest="trash_command", required=True)
+    p_trash_list = p_trash_sub.add_parser("list", help="List trashed plugins")
+    p_trash_restore = p_trash_sub.add_parser("restore", help="Restore a plugin from trash")
+    p_trash_restore.add_argument("name")
 
     p_web = sub.add_parser("web", help="Start the web management UI (browse/install/update plugins, view frameworks)")
     p_web.add_argument("--host", default="127.0.0.1", help="Bind address (default: 127.0.0.1)")
@@ -173,6 +185,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_update = sub.add_parser("update", help="Update locally installed plugins from index.json sources")
     p_update.add_argument("names", nargs="*", help="Plugin ids to update (default: every locally installed plugin in the merged index)")
     p_update.add_argument("--yes", action="store_true", help="Apply updates without confirmation")
+    p_update.add_argument("--force", action="store_true", help="Bypass the framework-presence guard when relinking updated plugins")
     p_update.add_argument("--remove-orphans", action="store_true", help="Uninstall and trash plugins absent from every source")
     p_update.add_argument("--timeout", type=int, default=None, help="Per-source HTTP timeout in seconds (default: config update.timeout)")
     p_update.add_argument("--self", action="store_true", help="Update the cs2lm tool itself and exit")
@@ -232,6 +245,44 @@ def cmd_add(args: argparse.Namespace, logger: Logger) -> int:
     if not any(sources):
         raise ValueError("Provide a local path, --url, or --pkg for the plugin package")
 
+    def looks_like_plugin(src: str | Path) -> bool:
+        """Best-effort check that a package actually contains plugin files."""
+        src = Path(src)
+        if not src.is_dir():
+            return src.suffix.lower() in (".dll", ".so", ".vdf")
+        return (
+            (src / "addons").is_dir()
+            or bool(list(src.glob("*.dll")) or list(src.glob("*.deps.json")))
+            or (src / "bin").exists()
+        )
+
+    def warn_if_empty(name: str, source: str | Path) -> None:
+        if not looks_like_plugin(source):
+            logger.warn(
+                "add",
+                f"WARNING: '{source}' does not look like a plugin package "
+                f"(no addons/ tree or binaries found). '{name}' was added "
+                "but may not load on the server.",
+            )
+
+    def warn_version_default(name: str, manifest: dict, package_root: Path) -> None:
+        """Warn when a package carries no version metadata and defaults to 1.0.0."""
+        if args.version is not None:
+            return
+        if manifest.get("version") != "1.0.0":
+            return
+        has_pkg_meta = bool(
+            list(package_root.rglob("manifest.json"))
+            or list(package_root.rglob("cs2pkg.json"))
+        )
+        if not has_pkg_meta:
+            logger.warn(
+                "add",
+                f"WARNING: '{name}' has no manifest.json/cs2pkg.json in the "
+                "package, so its version defaulted to 1.0.0. Pass "
+                "--version <semver> to set one explicitly.",
+            )
+
     def split_names(value: str | None) -> list[str]:
         if not value:
             return []
@@ -278,6 +329,8 @@ def cmd_add(args: argparse.Namespace, logger: Logger) -> int:
                 type_hint=args.type,
                 version=args.version,
             )
+            warn_if_empty(args.name, source)
+            warn_version_default(args.name, manifest, tmp)
     elif args.pkg:
         with tempfile.TemporaryDirectory(prefix="cs2lm-pkg-") as tmp:
             tmp = Path(tmp)
@@ -311,6 +364,11 @@ def cmd_add(args: argparse.Namespace, logger: Logger) -> int:
             return 0
         if not args.name:
             raise ValueError("A plugin name is required when adding from a local path.")
+        if Path(args.path).is_file() and Path(args.path).suffix.lower() == ".cs2pkg":
+            raise ValueError(
+                f"'{args.path}' is a .cs2pkg package. Use "
+                f"'cs2lm add --pkg {args.path}' to import it (or pass --pkg)."
+            )
         manifest = add_plugin(
             args.repo,
             args.name,
@@ -318,6 +376,7 @@ def cmd_add(args: argparse.Namespace, logger: Logger) -> int:
             type_hint=args.type,
             version=args.version,
         )
+        warn_if_empty(args.name, args.path)
     logger.info(
         "add",
         f"added plugin '{manifest['name']}'",
@@ -354,13 +413,17 @@ def cmd_uninstall(args: argparse.Namespace, logger: Logger) -> int:
 
 
 def cmd_enable(args: argparse.Namespace, logger: Logger) -> int:
-    manager = PluginManager(args.repo, dry_run=args.dry_run, logger=logger)
+    manager = PluginManager(
+        args.repo, dry_run=args.dry_run, force=args.force, logger=logger
+    )
     manager.enable(args.name)
     return 0
 
 
 def cmd_disable(args: argparse.Namespace, logger: Logger) -> int:
-    manager = PluginManager(args.repo, dry_run=args.dry_run, logger=logger)
+    manager = PluginManager(
+        args.repo, dry_run=args.dry_run, force=args.force, logger=logger
+    )
     manager.disable(args.name)
     return 0
 
@@ -455,6 +518,11 @@ def cmd_web(args: argparse.Namespace, logger: Logger) -> int:
 
     host = args.host
     token = args.auth_token
+    if not 0 <= args.port <= 65535:
+        raise ValueError(
+            f"Invalid port: {args.port}. Port must be between 0 and 65535 "
+            "(use 0 for a random free port)."
+        )
     if token == "":
         raise ValueError(
             "--auth-token must not be empty; pass a non-empty token or omit "
@@ -469,14 +537,19 @@ def cmd_web(args: argparse.Namespace, logger: Logger) -> int:
         )
 
     if args.daemon:
-        pid = start_daemon(
-            args.repo,
-            host=host,
-            port=args.port,
-            auth_token=token,
-            pidfile=args.pidfile,
-            logfile=args.daemon_log,
-        )
+        from cs2lm.daemon import DaemonError, start_daemon
+
+        try:
+            pid = start_daemon(
+                args.repo,
+                host=host,
+                port=args.port,
+                auth_token=token,
+                pidfile=args.pidfile,
+                logfile=args.daemon_log,
+            )
+        except DaemonError as exc:
+            raise ValueError(str(exc)) from exc
         location = args.pidfile or f"pid {pid}"
         print(f"Started web UI daemon ({location}).")
         return 0
@@ -572,6 +645,21 @@ def cmd_source(args: argparse.Namespace, logger: Logger) -> int:
                 headers[key.strip()] = value.strip()
             else:
                 raise ValueError(f"Invalid header (expected 'Name: Value'): {header}")
+        # Validate the index before saving it as a configured source, so a
+        # typo / unreachable / malformed index fails at `source add` time
+        # instead of silently poisoning later `search`/`update` runs.
+        from cs2lm.sources import SourceError, fetch_index
+
+        try:
+            fetch_index(
+                args.repo,
+                {"url": args.url, "headers": headers},
+                timeout=15,
+            )
+        except SourceError as exc:
+            raise ValueError(f"Invalid index.json at {args.url}: {exc}") from exc
+        except OSError as exc:
+            raise ValueError(f"Cannot fetch {args.url}: {exc}") from exc
         add_source(args.repo, args.url, headers=headers, name=args.name)
         print(f"Source added: {args.url}")
         logger.info("source", "source added", url=args.url)
@@ -709,6 +797,7 @@ def cmd_update(args: argparse.Namespace, logger: Logger) -> int:
             merged[plugin],
             dry_run=args.dry_run,
             yes=args.yes,
+            force=args.force,
             logger=logger,
         )
         status = result["status"]
@@ -757,6 +846,11 @@ def cmd_profile(args: argparse.Namespace, logger: Logger) -> int:
                 print(n)
         return 0
     if command == "create":
+        if not args.name:
+            raise ValueError(
+                "Profile name is required. Usage: "
+                "cs2lm profile create <name> [plugins...]"
+            )
         profiles.create_profile(args.repo, args.name, args.plugins)
         logger.info("profile", f"created profile '{args.name}'")
         return 0
@@ -777,6 +871,73 @@ def cmd_profile(args: argparse.Namespace, logger: Logger) -> int:
     return 2
 
 
+def cmd_remove(args: argparse.Namespace, logger: Logger) -> int:
+    import shutil
+    from datetime import datetime
+
+    from cs2lm.installer import PluginManager
+    from cs2lm.manifest import plugin_dir
+
+    repo = Path(args.repo)
+    pdir = plugin_dir(repo, args.name)
+    if not pdir.is_dir():
+        raise ValueError(f"Plugin not found in repository: {args.name}")
+
+    manager = PluginManager(repo, logger=logger)
+    if manager.plugin_has_links(args.name):
+        manager.uninstall(args.name)
+
+    trash = repo / "trash" / "plugins"
+    trash.mkdir(parents=True, exist_ok=True)
+    dest = trash / f"{args.name}-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+    shutil.move(str(pdir), str(dest))
+    logger.info("remove", f"removed plugin '{args.name}'")
+    print(
+        f"Removed '{args.name}' (moved to trash: {dest.name}). "
+        f"Restore with 'cs2lm trash restore {args.name}'."
+    )
+    return 0
+
+
+def cmd_trash(args: argparse.Namespace, logger: Logger) -> int:
+    import shutil
+
+    from cs2lm.manifest import plugin_dir
+
+    repo = Path(args.repo)
+    trash = repo / "trash" / "plugins"
+    if args.trash_command == "list":
+        if not trash.is_dir():
+            print("Trash is empty.")
+            return 0
+        entries = sorted(trash.iterdir())
+        if not entries:
+            print("Trash is empty.")
+            return 0
+        for p in entries:
+            print(p.name)
+        return 0
+    if args.trash_command == "restore":
+        if not trash.is_dir():
+            raise ValueError(f"No trashed plugin named '{args.name}'.")
+        candidates = sorted(trash.glob(f"{args.name}-*"))
+        if not candidates:
+            raise ValueError(f"No trashed plugin named '{args.name}'.")
+        latest = candidates[-1]
+        dest = plugin_dir(repo, args.name)
+        if dest.exists():
+            raise ValueError(
+                f"A plugin '{args.name}' already exists in the repository. "
+                "Remove it first, then restore from trash."
+            )
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(latest), str(dest))
+        logger.info("trash", f"restored plugin '{args.name}'")
+        print(f"Restored '{args.name}' from trash. Use 'cs2lm install {args.name}' to link it.")
+        return 0
+    raise ValueError(f"Unknown trash command: {args.trash_command}")  # pragma: no cover
+
+
 HANDLERS = {
     "init": cmd_init,
     "add": cmd_add,
@@ -795,6 +956,8 @@ HANDLERS = {
     "update": cmd_update,
     "source": cmd_source,
     "web": cmd_web,
+    "remove": cmd_remove,
+    "trash": cmd_trash,
 }
 
 
@@ -812,17 +975,26 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = build_parser()
     args = parser.parse_args(argv)
-    logger = _make_logger(args)
+    logger: Logger | None = None
     try:
+        logger = _make_logger(args)
         handler = HANDLERS[args.command]
         return handler(args, logger)
     except (linking.ConflictError, InstallError) as exc:
+        logger = logger or Logger()
         logger.error("cli", str(exc))
         print(f"error: {exc}", file=sys.stderr)
         return 1
     except (FileNotFoundError, ValueError, OSError, linking.LinkError) as exc:
+        logger = logger or Logger()
         logger.error("cli", str(exc))
         print(f"error: {exc}", file=sys.stderr)
         return 1
+    except OverflowError as exc:
+        logger = logger or Logger()
+        logger.error("cli", str(exc))
+        print(f"error: invalid numeric argument: {exc}", file=sys.stderr)
+        return 1
     finally:
-        logger.close()
+        if logger is not None:
+            logger.close()

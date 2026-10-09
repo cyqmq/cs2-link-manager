@@ -81,25 +81,27 @@ cs2lm profile use competitive
 | 命令 | 说明 |
 | --- | --- |
 | `init --server <dir>` | 创建仓库骨架和 `config.json`。 |
-| `add <name> <path>` / `add <name> --url <zip-url> [--addons-subdir <dir>]` / `add [<name>] --pkg <file.cs2pkg>` | 把插件包（本地目录、下载的 zip 或 `.cs2pkg`）复制进仓库，生成 `manifest.json`；`--pkg` 省略名字时用 `cs2pkg.json` 的 `name`；`--addons-subdir` 指定 zip 内 `addons/` 树所在的子目录（如 `public`）；`--type css|metamod|swiftly|plugify|modsharp` 可跳过自动识别。 |
+| `add <name> <path>` / `add <name> --url <zip-url> [--addons-subdir <dir>]` / `add [<name>] --pkg <file.cs2pkg>` | 把插件包（本地目录、下载的 zip 或 `.cs2pkg`）复制进仓库，生成 `manifest.json`；`--pkg` 省略名字时用 `cs2pkg.json` 的 `name`；`--addons-subdir` 指定 zip 内 `addons/` 树所在的子目录（如 `public`）；`--type css|metamod|swiftly|plugify|modsharp` 可跳过自动识别。传 `.cs2pkg` 路径给 `add <name> <path>` 会提示改用 `--pkg`；包内没有 `manifest.json`/`cs2pkg.json` 时版本默认 `1.0.0` 并打印警告（可用 `--version` 指定）；包看起来不像插件（无 addons/ 树或二进制）时也会警告。 |
 | `pack <name> [--out <dir>]` | 把仓库插件打包成 `.cs2pkg` 文件。 |
 | `install <name|#N> [--from-registry] [--timeout <s>] [--force]` | 按 manifest 创建链接（幂等）；如果插件不在仓库里，自动回退到已配置的 `index.json` 源（或本地注册表）下载安装，并递归补装 `requires` 依赖；`#N` 直接引用 `search` 结果快照里的序号。安装前检测插件所属框架是否已装在服务器上，缺失则拒绝（`--force` 绕过）。 |
 | `uninstall <name>` | 删除工具创建的链接，保留仓库文件。 |
-| `enable <name>` / `disable <name>` | 创建/删除链接（同 install/uninstall）。 |
+| `enable <name> [--force]` / `disable <name> [--force]` | 创建/删除链接（同 install/uninstall）；`--force` 与 `install --force` 一致，可绕过框架检测。 |
+| `remove <name>` | 从仓库删除插件（先卸载，再连同 manifest 移到 `trash/plugins/<name>-<时间戳>`），可用 `trash restore` 恢复。 |
+| `trash list` / `trash restore <name>` | 列出回收站中的插件 / 把最新一份同名插件恢复到仓库。 |
 | `list` | 显示名称、类型、版本、启用/安装状态。 |
-| `registry add <name> <url> [--description] [--type] [--addons-subdir] [--sha256 <hex>] [--requires <names>]` | 往本地注册表添加一个插件源（URL）；`--sha256` 记录 zip 校验和，`--requires` 记录依赖插件（逗号分隔）。 |
+| `registry add <name> <url> [--description] [--type] [--addons-subdir] [--sha256 <hex>] [--requires <names>]` | 往本地注册表添加一个插件源（URL）；`--sha256` 记录 zip 校验和，`--requires` 记录依赖插件（逗号分隔）。添加时会做一次 HEAD 可达性探测，不可达会打印警告但照常保存。 |
 | `registry list` / `registry remove <name>` | 列出 / 删除注册表条目。 |
-| `search [<query>] [--source <url>] [--timeout <s>]` | 合并所有已配置 `index.json` 源 + 本地注册表，输出带序号的目录（名称/版本/状态/来源/描述），并把结果快照写入 `state/search_result.json` 供 `install #N` 引用。 |
-| `update [name...] [--yes] [--remove-orphans] [--timeout <s>] [--self]` | 拉取配置的多个 `index.json` 源，只更新**本地已安装**的插件；缺失插件**不列出、绝不自动装**（避免大源刷屏）；`--remove-orphans` 把不在任何源里的插件移到仓库 trash；`--self` 尝试更新工具自身（git 检出时执行 `git pull`）。 |
-| `source add <index-url> [--name <n>] [--header "K: V"]...` | 添加一个 `index.json` 插件源（可带鉴权 header）。 |
+| `search [<query>] [--source <url>] [--timeout <s>]` | 合并所有已配置 `index.json` 源 + 本地注册表，输出带序号的目录（名称/版本/状态/来源/描述），并把结果快照写入 `state/search_result.json` 供 `install #N` 引用。状态区分「已装(版本)」（已链接到服务器）与「仓库(版本,未链接)」（仅存在于仓库，尚未启用）。 |
+| `update [name...] [--yes] [--force] [--remove-orphans] [--timeout <s>] [--self]` | 拉取配置的多个 `index.json` 源，只更新**本地已安装**的插件；缺失插件**不列出、绝不自动装**（避免大源刷屏）；`--force` 可绕过更新时的框架检测；`--remove-orphans` 把不在任何源里的插件移到仓库 trash；`--self` 尝试更新工具自身（git 检出时执行 `git pull`）。 |
+| `source add <index-url> [--name <n>] [--header "K: V"]...` | 添加一个 `index.json` 插件源（可带鉴权 header）；添加前会先抓取并校验 `index.json`（schema + plugins 对象），无效/不可达会拒绝添加。 |
 | `source list` / `source remove <index-url>` / `source clear` | 列出 / 删除 / 清空插件源。 |
 | `profile create <name> [plugins...]` | 创建命名 profile。 |
 | `profile use <name>` | 启用 profile 内插件、禁用其余插件，并打印差异报告。 |
 | `profile list` / `profile delete <name>` | 列出 / 删除 profile。 |
-| `doctor` | 检查服务器结构、断链、缺失目标、权限、冲突、CSS API 版本依赖。 |
+| `doctor [--verbose]` | 检查服务器结构、断链、缺失目标、权限、冲突、CSS API 版本依赖；`--verbose` 额外输出各框架在服务器上的安装状态。 |
 | `import <name> <path-in-server>` | 把服务器上指定路径的单个插件反向导入仓库。 |
 | `adopt [--plugin <name>]` | 扫描服务器上已有的 CSS 插件，批量导入仓库。 |
-| `web [--host H] [--port P] [--auth-token T]` | 启动本地 Web 管理界面：状态卡显示服务器框架，支持目录搜索、一键安装/卸载、更新全部、插件启停；并暴露 JSON API（见「Web UI」）。设置令牌后需要认证。 |
+| `web [--host H] [--port P] [--auth-token T] [--daemon] [--pidfile F] [--daemon-log F]` | 启动本地 Web 管理界面：状态卡显示服务器框架，支持目录搜索、一键安装/卸载、更新全部、插件启停；并暴露 JSON API（见「Web UI」）。`--port 0` 分配随机空闲端口并在启动行/`CS2LM_READY` 打印**实际**端口；`--daemon` 后台化，父进程会等待子进程真正监听成功才返回（失败返回非零并给出原因）。设置令牌后需要认证。 |
 
 全局选项：`--repo <path>`（默认 `plugins-repo` 或 `$CS2LM_REPO`）、
 `--dry-run`、`--log <file>`、`--log-format text|json`、`--verbose`、
@@ -259,9 +261,14 @@ Switched to profile 'competitive':
 * `add` / `import` / `registry add` 的 `--type` 接受上表任意值；不传时自动
   按包内 `addons/` 树的根目录识别框架。
 * 服务器端框架检测：工具扫描 `<server>/<csgo_rel>/addons`，报告每个框架
-  是否就位（CSS 额外要求 `api/CounterStrikeSharp.API.dll` 存在）。
-* **安装防护**：`install` 时如果插件所属框架未装在服务器上，直接拒绝并给出
-  安装框架的路径提示；确认无误可用 `--force` 绕过。
+  是否就位。CSS 额外要求 `api/CounterStrikeSharp.API.dll` 存在；
+  没有 marker 的框架（swiftly/plugify/modsharp）要求根目录里除了
+  `plugins`/`configs` 之外还有框架自身的文件（如 `bin`/core），否则视为
+  未安装——防止“用 `--force` 装了一个插件后，插件链接创建的 `addons/<fw>/`
+  目录被误判为框架已安装”。
+* **安装/更新防护**：`install` / `enable` / `update` 时如果插件所属框架未装在
+  服务器上，直接拒绝并给出安装框架的路径提示；确认无误可用 `--force` 绕过
+  （`update --force` 同样生效）。
 * `doctor` 与 `web` 会显示服务器当前已装的框架。
 
 框架检测在 `doctor --verbose`、`web /api/status` 与 Web 页面状态卡中可见。
@@ -656,9 +663,17 @@ curl -H "X-Auth-Token: my-secret" -X POST \
 判断服务**真正开始监听**，而不是只靠 `kill -0` 判断进程存活：
 
 ```bash
-curl -H "X-Auth-Token: my-secret" http://127.0.0.1:8080/api/health
+curl http://127.0.0.1:8080/api/health
 # {"status": "ok", "service": "cs2-link-manager-web", ...}
 ```
+
+* `/api/health` 是**免认证**的就绪探针（即使设置了 `--auth-token` 也不需要
+  令牌），方便包装脚本/负载均衡器直接探测；
+* 后台化（`--daemon`）时子进程以 `python -u` 启动，stdout 无缓冲，
+  `CS2LM_READY port=...` 会**立即写入** `--daemon-log`；
+* `--daemon` 父进程会在返回前轮询 `/api/health`（或从日志解析实际端口）确认
+  子进程真的在监听；端口被占用/立即退出时返回非零并清理 pidfile，不会误报
+  “Started web UI daemon”。
 
 **安全提示**：默认绑定 `127.0.0.1` 且没有认证——不要把端口暴露到不可信
 网络。如果需要在远程机器上使用，请通过 SSH 端口转发访问：

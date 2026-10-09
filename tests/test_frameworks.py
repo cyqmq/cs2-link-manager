@@ -272,3 +272,165 @@ def test_webui_api_uninstall(repo_server, tmp_path):
     finally:
         server.shutdown()
         thread.join()
+
+
+# ---------------------------------------------------------------------------
+# B1: --force must work on the source-install path
+# ---------------------------------------------------------------------------
+
+
+def test_install_source_force_bypasses_framework_guard(repo_server, tmp_path):
+    repo, _server = repo_server
+    zip_path = _zip_package(
+        make_framework_package(tmp_path, "plugify", "PlSrc"),
+        tmp_path / "plsrc.zip",
+    )
+    index_path = _write_index(
+        tmp_path,
+        {
+            "PlSrc": {
+                "id": "PlSrc",
+                "version": "1.0.0",
+                "download_url": zip_path.as_uri(),
+                "plugin_type": "plugify",
+            }
+        },
+    )
+    assert cli.main(["--repo", str(repo), "source", "add", index_path.as_uri()]) == 0
+
+    # Without --force the framework guard blocks the source install.
+    assert cli.main(["--repo", str(repo), "install", "PlSrc"]) == 1
+    assert "PlSrc" in list_plugins(repo)
+    assert PluginManager(repo).plugin_has_links("PlSrc") is False
+
+    # With --force the same source install completes.
+    assert cli.main(["--repo", str(repo), "install", "PlSrc", "--force"]) == 0
+    assert PluginManager(repo).plugin_has_links("PlSrc") is True
+
+
+# ---------------------------------------------------------------------------
+# B2: update must not leave a half-updated state; --force completes it
+# ---------------------------------------------------------------------------
+
+
+def test_update_blocked_without_force_keeps_state(repo_server, tmp_path):
+    repo, _server = repo_server
+    pkg1 = make_framework_package(tmp_path, "plugify", "PlUpd")
+    add_plugin(repo, "PlUpd", pkg1, version="1.0.0")
+    PluginManager(repo, force=True).install("PlUpd")
+    assert load_manifest(repo, "PlUpd")["version"] == "1.0.0"
+
+    zip2 = _zip_package(
+        make_framework_package(tmp_path / "v2", "plugify", "PlUpd"),
+        tmp_path / "plupd2.zip",
+    )
+    index_path = _write_index(
+        tmp_path,
+        {
+            "PlUpd": {
+                "id": "PlUpd",
+                "version": "2.0.0",
+                "download_url": zip2.as_uri(),
+                "plugin_type": "plugify",
+            }
+        },
+    )
+    assert cli.main(["--repo", str(repo), "source", "add", index_path.as_uri()]) == 0
+
+    # update without --force -> blocked; manifest/links stay consistent.
+    assert cli.main(["--repo", str(repo), "update", "PlUpd", "--yes"]) == 1
+    manifest = load_manifest(repo, "PlUpd")
+    assert manifest["version"] == "1.0.0"
+    assert PluginManager(repo).plugin_has_links("PlUpd") is True
+
+    # update with --force -> completes and relinks.
+    assert cli.main(["--repo", str(repo), "update", "PlUpd", "--yes", "--force"]) == 0
+    assert load_manifest(repo, "PlUpd")["version"] == "2.0.0"
+    assert PluginManager(repo).plugin_has_links("PlUpd") is True
+
+
+# ---------------------------------------------------------------------------
+# U6: remove + trash list/restore
+# ---------------------------------------------------------------------------
+
+
+def test_remove_and_trash_restore(repo_server, tmp_path):
+    repo, _server = repo_server
+    add_plugin(repo, "RmPlugin", make_css_package(tmp_path, "RmPlugin"))
+    assert cli.main(["--repo", str(repo), "remove", "RmPlugin"]) == 0
+    assert "RmPlugin" not in list_plugins(repo)
+    assert cli.main(["--repo", str(repo), "trash", "list"]) == 0
+    assert cli.main(["--repo", str(repo), "trash", "restore", "RmPlugin"]) == 0
+    assert "RmPlugin" in list_plugins(repo)
+
+
+# ---------------------------------------------------------------------------
+# U2: add <name> xxx.cs2pkg suggests --pkg
+# ---------------------------------------------------------------------------
+
+
+def test_add_cs2pkg_suggests_pkg_flag(repo_server, tmp_path, capsys):
+    repo, _server = repo_server
+    add_plugin(repo, "PkgPlugin", make_css_package(tmp_path, "PkgPlugin"))
+    assert cli.main(["--repo", str(repo), "pack", "PkgPlugin", "--out", str(tmp_path / "out")]) == 0
+    pkg_file = tmp_path / "out" / "PkgPlugin.cs2pkg"
+    assert pkg_file.exists()
+
+    rc = cli.main(["--repo", str(repo), "add", "Other", str(pkg_file)])
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert "cs2pkg" in captured.err.lower()
+
+
+# ---------------------------------------------------------------------------
+# U4: source add rejects an invalid index
+# ---------------------------------------------------------------------------
+
+
+def test_source_add_rejects_invalid_index(repo_server, tmp_path):
+    repo, _server = repo_server
+    bad = tmp_path / "bad.json"
+    bad.write_text(json.dumps({"schema": 99, "plugins": {}}), encoding="utf-8")
+    assert cli.main(["--repo", str(repo), "source", "add", bad.as_uri()]) == 1
+    from cs2lm.sources import list_sources
+
+    assert list_sources(repo) == []
+
+
+# ---------------------------------------------------------------------------
+# U8: doctor accepts --verbose; B3/B7 friendly errors
+# ---------------------------------------------------------------------------
+
+
+def test_doctor_verbose_flag(repo_server):
+    repo, _server = repo_server
+    assert cli.main(["--repo", str(repo), "doctor", "--verbose"]) == 0
+
+
+def test_web_invalid_port_friendly(repo_server):
+    repo, _server = repo_server
+    assert cli.main(["--repo", str(repo), "web", "--port", "99999"]) == 1
+
+
+def test_log_unwritable_path_friendly(repo_server, tmp_path):
+    repo, _server = repo_server
+    blocker = tmp_path / "blocker"
+    blocker.write_text("I am a file, not a directory", encoding="utf-8")
+    log_path = blocker / "nested" / "x.log"
+    assert cli.main(["--repo", str(repo), "--log", str(log_path), "list"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# U5: registry add warns on unreachable URL (still succeeds)
+# ---------------------------------------------------------------------------
+
+
+def test_registry_add_warns_unreachable(repo_server, tmp_path, capsys):
+    repo, _server = repo_server
+    rc = cli.main(["--repo", str(repo), "registry", "add", "BadReg", "http://127.0.0.1:1/x.zip"])
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert "unreachable" in captured.err
+    from cs2lm.registry import load_registry
+
+    assert "BadReg" in load_registry(repo)

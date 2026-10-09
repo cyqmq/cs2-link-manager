@@ -32,12 +32,16 @@ def _matches(query: str, name: str, entry: dict) -> bool:
     return q in haystack
 
 
-def _status(local: str | None, version: str | None) -> str:
+def _status(local: str | None, version: str | None, linked: bool) -> str:
     if not local:
         return "未安装"
+    if linked:
+        base = f"已装({local})"
+    else:
+        base = f"仓库({local},未链接)"
     if version and version_gt(version, local):
-        return f"已装({local})→{version}"
-    return f"已装({local})"
+        return f"{base}→{version}"
+    return base
 
 
 def _source_label(source: dict) -> str:
@@ -72,6 +76,7 @@ def search_catalog(
     Returns ``(rows, warnings)``.
     """
     from cs2lm.config import load_config
+    from cs2lm.installer import PluginManager
     from cs2lm.manifest import list_plugins, load_manifest
     from cs2lm.registry import registry_search
     from cs2lm.sources import fetch_and_merge, get_sources
@@ -96,6 +101,7 @@ def search_catalog(
         warnings.extend(result.get("warnings") or [])
 
     local_versions: dict[str, str] = {}
+    manager = PluginManager(repo)
     for name in list_plugins(repo):
         try:
             local_versions[name] = str(
@@ -103,6 +109,11 @@ def search_catalog(
             )
         except Exception:  # noqa: BLE001 - skip unreadable manifests
             continue
+
+    linked_plugins: set[str] = set()
+    for name in local_versions:
+        if manager.plugin_has_links(name):
+            linked_plugins.add(name)
 
     labels: dict[str, str] = {}
     for result in fetch_results:
@@ -128,8 +139,9 @@ def search_catalog(
             {
                 "name": plugin_id,
                 "version": version,
-                "status": _status(local, version),
+                "status": _status(local, version, plugin_id in linked_plugins),
                 "installed_version": local,
+                "linked": plugin_id in linked_plugins,
                 "source": labels.get(source_url, _source_label({"url": source_url})),
                 "source_url": source_url,
                 "source_kind": "index",
@@ -152,8 +164,9 @@ def search_catalog(
             {
                 "name": name,
                 "version": None,
-                "status": _status(local, None),
+                "status": _status(local, None, name in linked_plugins),
                 "installed_version": local,
+                "linked": name in linked_plugins,
                 "source": "registry",
                 "source_url": None,
                 "source_kind": "registry",
@@ -223,12 +236,15 @@ def install_from_index_with_deps(
     name: str,
     merged: dict,
     dry_run: bool = False,
+    force: bool = False,
     logger=None,
 ) -> dict:
     """Install a plugin from the merged index, dependencies first.
 
     Uses :func:`cs2lm.updater.expand_requires` to order missing ``requires``
     plugins before their dependents, then downloads/verifies/installs each one.
+    ``force`` is forwarded to the plugin manager so ``install --force`` can
+    bypass the framework-presence guard even on the source-install path.
     """
     from cs2lm.updater import expand_requires, install_plugin_from_index, scan_local
 
@@ -246,6 +262,7 @@ def install_from_index_with_deps(
             merged[plugin],
             dry_run=dry_run,
             logger=logger,
+            force=force,
         )
         if result["status"] in ("installed", "would-install"):
             installed.append(plugin)
@@ -326,6 +343,7 @@ def install_plugin(
                     name,
                     merged,
                     dry_run=dry_run,
+                    force=force,
                     logger=logger,
                 )
                 for plugin in result["installed"]:

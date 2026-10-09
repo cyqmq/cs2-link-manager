@@ -98,6 +98,28 @@ def framework_ids() -> list[str]:
     return [fw["id"] for fw in FRAMEWORKS]
 
 
+def _framework_installed_at(root: Path, fw: dict) -> bool:
+    """Return ``True`` when a framework is genuinely installed at ``root``.
+
+    Frameworks with a ``marker`` require that file. Frameworks without one
+    (plugify/swiftly/modsharp) require some framework-owned entry besides
+    ``plugins``/``configs``, because a force-installed plugin creates only
+    those two directories under the root (via its links); a real framework
+    install always ships binaries/core files in the root.
+    """
+    if not root.is_dir():
+        return False
+    if fw["marker"]:
+        return (root / fw["marker"]).exists()
+    try:
+        own_entries = [
+            e.name for e in root.iterdir() if e.name not in ("plugins", "configs")
+        ]
+    except OSError:
+        own_entries = []
+    return bool(own_entries)
+
+
 def detect_frameworks(
     server: str | Path,
     csgo_rel: str = "game/csgo",
@@ -106,15 +128,15 @@ def detect_frameworks(
 
     Scans ``<server>/<csgo_rel>/addons`` and returns one entry per known
     framework with ``id``, ``name`` and ``installed``. A framework is present
-    when its root directory exists; frameworks with a marker file require it.
+    when its root directory exists (plus its marker file when defined) — and
+    for marker-less frameworks, when it contains framework-owned files beyond
+    what plugin links create under ``plugins``/``configs``.
     """
     addons = Path(server) / csgo_rel / "addons"
     result: list[dict] = []
     for fw in FRAMEWORKS:
         root = addons / fw["root"]
-        installed = root.is_dir()
-        if installed and fw["marker"]:
-            installed = (root / fw["marker"]).exists()
+        installed = _framework_installed_at(root, fw)
         result.append(
             {
                 "id": fw["id"],
@@ -156,10 +178,7 @@ def require_framework_present(
         return
     addons = Path(server) / csgo_rel / "addons"
     root = addons / info["root"]
-    present = root.is_dir()
-    if present and info["marker"]:
-        present = (root / info["marker"]).exists()
-    if not present:
+    if not _framework_installed_at(root, info):
         raise FrameworkMissingError(
             f"plugin requires {info['name']} but it is not installed on the "
             f"server (expected {root}). Install the framework first, or use "

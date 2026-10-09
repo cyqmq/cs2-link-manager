@@ -58,6 +58,9 @@ def test_cli_search_shows_catalog_statuses(repo_server, tmp_path, capsys):
     """search merges index sources + registry, annotates install status."""
     repo, _server = repo_server
     add_plugin(repo, "Installed", make_css_package(tmp_path, "Installed"))
+    from cs2lm.installer import PluginManager
+
+    PluginManager(repo).install("Installed")
 
     zip_new = _zip_package(make_css_package(tmp_path, "NewOne"), tmp_path / "new.zip")
     zip_reg = _zip_package(make_css_package(tmp_path, "RegPlugin"), tmp_path / "reg.zip")

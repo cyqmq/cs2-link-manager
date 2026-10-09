@@ -104,13 +104,12 @@ def test_webui_health_endpoint(repo_server, tmp_path):
         assert data["service"] == "cs2-link-manager-web"
         assert data["auth"] is True
 
-        # Unauthorized health check -> 401.
+        # Health is a readiness probe: it must work without a token.
         req = urllib.request.Request(f"http://127.0.0.1:{port}/api/health")
-        try:
-            urllib.request.urlopen(req)
-            raise AssertionError("expected HTTPError for unauthorized health")
-        except urllib.error.HTTPError as exc:
-            assert exc.code == 401
+        with urllib.request.urlopen(req) as resp:
+            assert resp.status == 200
+            data = jsonlib.loads(resp.read().decode("utf-8"))
+        assert data["status"] == "ok"
     finally:
         server.shutdown()
         thread.join()
