@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **web UI language switching**: the web UI now supports English / 中文 with a
+  top-right `中文 | English` switcher (also present on the login page). The
+  choice is persisted in a `lang` cookie (`?lang=en|zh` sets it), falls back to
+  the browser's `Accept-Language`, survives search/install/toggle actions, and
+  also localizes the catalog status text.
 - **embedded default source**: `cs2lm init` now includes the community port
   hub `https://github.com/cyqmq/cs2pkg-port` as a pre-configured source
   (removable like any other; `source clear` is respected and the default is

@@ -37,6 +37,137 @@ from cs2lm.frameworks import detect_frameworks
 from cs2lm.installer import PluginManager
 
 
+# ---------------------------------------------------------------------------
+# Lightweight i18n (English / Chinese)
+# ---------------------------------------------------------------------------
+
+_I18N: dict[str, dict[str, str]] = {
+    "en": {
+        "auth_required": "auth required",
+        "web": "Web",
+        "auth": "Auth",
+        "cs2_server": "CS2 server",
+        "frameworks": "Frameworks",
+        "repo": "Repo",
+        "server": "Server",
+        "online": "online",
+        "offline": "offline",
+        "unknown": "unknown",
+        "required": "required",
+        "off": "off",
+        "none": "none",
+        "enabled": "enabled",
+        "disabled": "disabled",
+        "yes": "yes",
+        "no": "no",
+        "enable": "Enable",
+        "disable": "Disable",
+        "error": "Error",
+        "warning": "warning",
+        "catalog": "Catalog",
+        "name": "Name",
+        "type": "Type",
+        "version": "Version",
+        "status": "Status",
+        "source": "Source",
+        "description": "Description",
+        "install": "Install",
+        "installed": "Installed",
+        "no_plugins_found": "No plugins found.",
+        "search_placeholder": "search plugins…",
+        "search_catalog": "Search catalog",
+        "update_all": "Update all",
+        "repository": "Repository",
+        "no_plugins_in_repo": "No plugins in repository.",
+        "token": "Token",
+        "unlock": "Unlock",
+        "missing_name": "missing 'name'",
+        "unknown_action": "Unknown action",
+        "not_found": "Not Found",
+    },
+    "zh": {
+        "auth_required": "需要认证",
+        "web": "Web",
+        "auth": "认证",
+        "cs2_server": "CS2 服务器",
+        "frameworks": "框架",
+        "repo": "仓库",
+        "server": "服务器",
+        "online": "在线",
+        "offline": "离线",
+        "unknown": "未知",
+        "required": "需要",
+        "off": "关闭",
+        "none": "无",
+        "enabled": "已启用",
+        "disabled": "已禁用",
+        "yes": "是",
+        "no": "否",
+        "enable": "启用",
+        "disable": "禁用",
+        "error": "错误",
+        "warning": "警告",
+        "catalog": "插件目录",
+        "name": "名称",
+        "type": "类型",
+        "version": "版本",
+        "status": "状态",
+        "source": "来源",
+        "description": "描述",
+        "install": "安装",
+        "installed": "已安装",
+        "no_plugins_found": "未找到插件。",
+        "search_placeholder": "搜索插件…",
+        "search_catalog": "搜索目录",
+        "update_all": "全部更新",
+        "repository": "仓库插件",
+        "no_plugins_in_repo": "仓库中没有插件。",
+        "token": "令牌",
+        "unlock": "解锁",
+        "missing_name": "缺少 'name'",
+        "unknown_action": "未知操作",
+        "not_found": "未找到",
+    },
+}
+
+_LANG_CODES = ("en", "zh")
+
+
+def _t(lang: str, key: str) -> str:
+    """Translate a UI string. Falls back to English for unknown keys."""
+    table = _I18N.get(lang) or _I18N["en"]
+    return table.get(key, _I18N["en"].get(key, key))
+
+
+def _localize_status(status: str, lang: str) -> str:
+    """Translate the Chinese catalog status strings for the English UI."""
+    if lang == "zh":
+        return status
+    return (
+        status.replace("仓库", "In repo")
+        .replace("未链接", "not linked")
+        .replace("已装", "Installed")
+        .replace("未安装", "Not installed")
+    )
+
+
+def _lang_links(lang: str, query: str = "", auth_token: str | None = None) -> str:
+    """Language switcher links that preserve token and current search query."""
+    token_part = f"&token={urllib.parse.quote(auth_token)}" if auth_token else ""
+    q_part = f"&q={urllib.parse.quote(query)}" if query else ""
+    zh = f'<a href="/?lang=zh{token_part}{q_part}">中文</a>'
+    en = f'<a href="/?lang=en{token_part}{q_part}">English</a>'
+    if lang == "zh":
+        zh = "<span>中文</span>"
+    else:
+        en = "<span>English</span>"
+    return (
+        f"<div style='float:right;'>"
+        f"{zh} | {en}"
+        f"</div>"
+    )
+
+
 def _plugin_rows(repo: str | Path) -> list[dict]:
     return PluginManager(repo).list_plugins()
 
@@ -96,7 +227,7 @@ def _server_status(repo: str | Path) -> dict:
     }
 
 
-def _framework_badges(frameworks: list[dict]) -> str:
+def _framework_badges(frameworks: list[dict], lang: str = "en") -> str:
     parts = []
     for fw in frameworks:
         color = "green" if fw.get("installed") else "#999"
@@ -105,7 +236,8 @@ def _framework_badges(frameworks: list[dict]) -> str:
             f"border-radius:10px; padding:0.1rem 0.5rem; font-size:0.8rem;'>"
             f"{html.escape(fw.get('name', fw.get('id', '')))}</span>"
         )
-    return " ".join(parts) if parts else "<em>none</em>"
+    none_text = _t(lang, "none")
+    return " ".join(parts) if parts else f"<em>{none_text}</em>"
 
 
 def _catalog_rows(
@@ -135,32 +267,36 @@ def _render_page(
     query: str = "",
     catalog: list[dict] | None = None,
     warnings: list[str] | None = None,
+    lang: str = "en",
 ) -> str:
+    if lang not in _LANG_CODES:
+        lang = "en"
     rows = _plugin_rows(repo)
     status = _server_status(repo)
-    auth_text = "required" if auth_token else "off"
+    auth_text = _t(lang, "required") if auth_token else _t(lang, "off")
+    cs2_status = _t(lang, status["cs2"]) if status["cs2"] in ("online", "offline", "unknown") else status["cs2"]
     cs2_color = (
         "green" if status["cs2"] == "online"
         else "orange" if status["cs2"] == "unknown"
         else "red"
     )
-    badges = _framework_badges(status.get("frameworks") or [])
+    badges = _framework_badges(status.get("frameworks") or [], lang)
     status_card = f"""<div style="border:1px solid #ccc; border-radius:8px; padding:0.8rem 1.2rem; margin-bottom:1.5rem; display:flex; gap:2rem; flex-wrap:wrap;">
-  <div><strong>Web</strong><br><span style="color:green">online</span></div>
-  <div><strong>Auth</strong><br>{html.escape(auth_text)}</div>
-  <div><strong>CS2 server</strong><br><span style="color:{cs2_color}">{status['cs2']}</span></div>
-  <div><strong>Frameworks</strong><br>{badges}</div>
-  <div><strong>Repo</strong><br><code>{html.escape(status['repo'])}</code></div>
-  <div><strong>Server</strong><br><code>{html.escape(status['server'])}</code></div>
+  <div><strong>{_t(lang, 'web')}</strong><br><span style="color:green">{_t(lang, 'online')}</span></div>
+  <div><strong>{_t(lang, 'auth')}</strong><br>{html.escape(auth_text)}</div>
+  <div><strong>{_t(lang, 'cs2_server')}</strong><br><span style="color:{cs2_color}">{cs2_status}</span></div>
+  <div><strong>{_t(lang, 'frameworks')}</strong><br>{badges}</div>
+  <div><strong>{_t(lang, 'repo')}</strong><br><code>{html.escape(status['repo'])}</code></div>
+  <div><strong>{_t(lang, 'server')}</strong><br><code>{html.escape(status['server'])}</code></div>
 </div>"""
 
     rows_html = []
     for r in rows:
         name = html.escape(r["name"])
-        enabled = "enabled" if r["enabled"] else "disabled"
-        installed = "yes" if r["installed"] else "no"
+        enabled = _t(lang, "enabled") if r["enabled"] else _t(lang, "disabled")
+        installed = _t(lang, "yes") if r["installed"] else _t(lang, "no")
         action = "disable" if r["enabled"] else "enable"
-        label = "Disable" if r["enabled"] else "Enable"
+        label = _t(lang, "disable") if r["enabled"] else _t(lang, "enable")
         rows_html.append(
             f"<tr>"
             f"<td>{name}</td>"
@@ -178,7 +314,9 @@ def _render_page(
         )
 
     error_html = (
-        f"<p style='color:red'>Error: {html.escape(error)}</p>" if error else ""
+        f"<p style='color:red'>{_t(lang, 'error')}: {html.escape(error)}</p>"
+        if error
+        else ""
     )
 
     catalog_html = ""
@@ -186,7 +324,8 @@ def _render_page(
         cat_rows = []
         for item in catalog:
             iname = html.escape(item["name"])
-            status_text = html.escape(str(item.get("status") or ""))
+            status_text = _localize_status(str(item.get("status") or ""), lang)
+            status_text = html.escape(status_text)
             version = html.escape(str(item.get("version") or ""))
             source_label = html.escape(str(item.get("source") or ""))
             desc = html.escape(str(item.get("description") or ""))
@@ -197,24 +336,28 @@ def _render_page(
                 f"<td><form method='post' action='/install'>"
                 f"{_token_field(auth_token)}"
                 f"<input type='hidden' name='name' value='{iname}'>"
-                f"<button type='submit'>Install</button>"
+                f"<button type='submit'>{_t(lang, 'install')}</button>"
                 f"</form></td></tr>"
             )
         warning_html = ""
         for w in warnings or []:
-            warning_html += f"<p style='color:orange'>warning: {html.escape(w)}</p>"
-        catalog_html = f"""<h2>Catalog</h2>
+            warning_html += (
+                f"<p style='color:orange'>{_t(lang, 'warning')}: {html.escape(w)}</p>"
+            )
+        no_results = _t(lang, "no_plugins_found")
+        catalog_html = f"""<h2>{_t(lang, 'catalog')}</h2>
 {warning_html}
 <table>
-<thead><tr><th>#</th><th>Name</th><th>Version</th><th>Status</th><th>Source</th><th>Description</th><th></th></tr></thead>
-<tbody>{''.join(cat_rows) or '<tr><td colspan="7">No plugins found.</td></tr>'}</tbody>
+<thead><tr><th>#</th><th>{_t(lang, 'name')}</th><th>{_t(lang, 'version')}</th><th>{_t(lang, 'status')}</th><th>{_t(lang, 'source')}</th><th>{_t(lang, 'description')}</th><th></th></tr></thead>
+<tbody>{''.join(cat_rows) or f'<tr><td colspan="7">{no_results}</td></tr>'}</tbody>
 </table>"""
 
     token_attr = (
         f"value='{html.escape(auth_token)}'" if auth_token else ""
     )
+    no_plugins_in_repo = _t(lang, "no_plugins_in_repo")
     return f"""<!doctype html>
-<html lang="en">
+<html lang="{lang}">
 <head>
   <meta charset="utf-8">
   <title>cs2-link-manager</title>
@@ -229,25 +372,25 @@ def _render_page(
   </style>
 </head>
 <body>
-  <h1>cs2-link-manager</h1>
+  <h1>cs2-link-manager {_lang_links(lang, query, auth_token)}</h1>
   {status_card}
   {error_html}
   <div style="margin-bottom:1.5rem;">
     <form method="get" action="/" style="display:inline-block;">
       <input type="hidden" name="token" {token_attr}>
-      <input name="q" placeholder="search plugins…" value="{html.escape(query)}">
-      <button type="submit">Search catalog</button>
+      <input name="q" placeholder="{_t(lang, 'search_placeholder')}" value="{html.escape(query)}">
+      <button type="submit">{_t(lang, 'search_catalog')}</button>
     </form>
     <form method="post" action="/update" style="display:inline-block;">
       {_token_field(auth_token)}
-      <button type="submit">Update all</button>
+      <button type="submit">{_t(lang, 'update_all')}</button>
     </form>
   </div>
   {catalog_html}
-  <h2>Repository</h2>
+  <h2>{_t(lang, 'repository')}</h2>
   <table>
-    <thead><tr><th>Name</th><th>Type</th><th>Version</th><th>Enabled</th><th>Installed</th><th></th></tr></thead>
-    <tbody>{''.join(rows_html) or '<tr><td colspan="6">No plugins in repository.</td></tr>'}</tbody>
+    <thead><tr><th>{_t(lang, 'name')}</th><th>{_t(lang, 'type')}</th><th>{_t(lang, 'version')}</th><th>{_t(lang, 'enabled')}</th><th>{_t(lang, 'installed')}</th><th></th></tr></thead>
+    <tbody>{''.join(rows_html) or f'<tr><td colspan="6">{no_plugins_in_repo}</td></tr>'}</tbody>
   </table>
 </body>
 </html>
@@ -262,23 +405,26 @@ def _token_field(auth_token: str | None) -> str:
     )
 
 
-def _render_login() -> str:
-    return """<!doctype html>
-<html lang="en">
+def _render_login(lang: str = "en") -> str:
+    if lang not in _LANG_CODES:
+        lang = "en"
+    auth_required = _t(lang, "auth_required")
+    return f"""<!doctype html>
+<html lang="{lang}">
 <head>
   <meta charset="utf-8">
-  <title>cs2-link-manager - auth required</title>
+  <title>cs2-link-manager - {auth_required}</title>
   <style>
-    body { font-family: system-ui, sans-serif; margin: 2rem; }
-    input[type=password] { padding: 0.4rem; }
-    button { cursor: pointer; padding: 0.4rem 1rem; }
+    body {{ font-family: system-ui, sans-serif; margin: 2rem; }}
+    input[type=password] {{ padding: 0.4rem; }}
+    button {{ cursor: pointer; padding: 0.4rem 1rem; }}
   </style>
 </head>
 <body>
-  <h1>cs2-link-manager</h1>
+  <h1>cs2-link-manager {_lang_links(lang)}</h1>
   <form method="get" action="/">
-    <label>Token: <input type="password" name="token"></label>
-    <button type="submit">Unlock</button>
+    <label>{_t(lang, 'token')}: <input type="password" name="token"></label>
+    <button type="submit">{_t(lang, 'unlock')}</button>
   </form>
 </body>
 </html>
@@ -310,9 +456,30 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _get_lang(self) -> str:
+        """Resolve UI language: query ``lang`` -> cookie -> Accept-Language -> English."""
+        qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        lang = (qs.get("lang") or [""])[0]
+        if lang in _LANG_CODES:
+            return lang
+        cookie = self.headers.get("Cookie", "")
+        for part in cookie.split(";"):
+            key, _, value = part.strip().partition("=")
+            if key == "lang" and value in _LANG_CODES:
+                return value
+        accept = self.headers.get("Accept-Language", "")
+        if accept.lower().startswith("zh"):
+            return "zh"
+        return "en"
+
     def _send_html(self, page: str, status: int = 200) -> None:
         self.send_response(status)
         self.send_header("Content-Type", "text/html; charset=utf-8")
+        # Persist an explicitly requested language (via ?lang=) in a cookie.
+        lang_cookie = getattr(self, "_set_lang_cookie", None)
+        if lang_cookie:
+            self.send_header("Set-Cookie", f"lang={lang_cookie}; Path=/")
+            self._set_lang_cookie = None
         self.end_headers()
         self.wfile.write(page.encode("utf-8"))
 
@@ -378,6 +545,11 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):  # noqa: N802
         parsed = urllib.parse.urlparse(self.path)
+        qs = urllib.parse.parse_qs(parsed.query)
+        lang_param = (qs.get("lang") or [""])[0]
+        if lang_param in _LANG_CODES:
+            self._set_lang_cookie = lang_param
+        lang = self._get_lang()
         # Readiness probe: deliberately auth-free so wrapper scripts can use it
         # as a health check without knowing the token.
         if parsed.path == "/api/health":
@@ -397,7 +569,7 @@ class _Handler(BaseHTTPRequestHandler):
         token = self._request_token()
         if not self._authorized(token):
             if parsed.path == "/":
-                self._send_html(_render_login(), status=401)
+                self._send_html(_render_login(lang=lang), status=401)
             else:
                 self._send_json({"status": "unauthorized"}, status=401)
             return
@@ -421,9 +593,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_json({"results": rows, "warnings": warnings})
             return
         if parsed.path != "/":
-            self.send_error(404, "Not Found")
+            self.send_error(404, _t(lang, "not_found"))
             return
-        qs = urllib.parse.parse_qs(parsed.query)
         query = (qs.get("q") or [""])[0]
         warnings: list[str] = []
         catalog = None
@@ -438,6 +609,7 @@ class _Handler(BaseHTTPRequestHandler):
                         self.server.repo,
                         error=str(exc),
                         auth_token=getattr(self.server, "auth_token", None),
+                        lang=lang,
                     ),
                     status=400,
                 )
@@ -449,11 +621,13 @@ class _Handler(BaseHTTPRequestHandler):
                 query=query,
                 catalog=catalog,
                 warnings=warnings,
+                lang=lang,
             )
         )
 
     def do_POST(self):  # noqa: N802
         parsed = urllib.parse.urlparse(self.path)
+        lang = self._get_lang()
         body = self._read_body()
         token = self.headers.get("X-Auth-Token") or str(body.get("token") or "")
         if not self._authorized(token):
@@ -497,13 +671,14 @@ class _Handler(BaseHTTPRequestHandler):
                         self.server.repo,
                         error=str(exc),
                         auth_token=getattr(self.server, "auth_token", None),
+                        lang=lang,
                     ),
                     status=400,
                 )
                 return
             self._redirect(self._root_with_token())
             return
-        self.send_error(404, "Not Found")
+        self.send_error(404, _t(lang, "not_found"))
 
     def log_message(self, format, *args):  # noqa: A002
         pass

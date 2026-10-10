@@ -281,3 +281,129 @@ def test_webui_requires_token(repo_server, tmp_path):
     finally:
         server.shutdown()
         thread.join()
+
+
+def _read(port, path):
+    """GET a path and return (status, body, headers)."""
+    import urllib.error
+
+    base = f"http://127.0.0.1:{port}"
+    try:
+        with urllib.request.urlopen(base + path) as resp:
+            return resp.status, resp.read().decode("utf-8"), resp.headers
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read().decode("utf-8"), exc.headers
+
+
+def test_webui_language_switch_zh(repo_server, tmp_path):
+    repo, _server = repo_server
+    add_plugin(repo, tmp_path, "WebPlugin")
+    server, thread, port = start_server(repo)
+    try:
+        status, body, _ = _read(port, "/?lang=zh")
+        assert status == 200
+        assert "仓库插件" in body  # Repository heading
+        assert "搜索目录" in body  # Search catalog button
+        assert "全部更新" in body  # Update all button
+        assert "禁用" in body      # Disable button (plugin enabled by default)
+        assert 'lang="zh"' in body
+    finally:
+        server.shutdown()
+        thread.join()
+
+
+def test_webui_language_cookie_persists(repo_server, tmp_path):
+    repo, _server = repo_server
+    add_plugin(repo, tmp_path, "WebPlugin")
+    server, thread, port = start_server(repo)
+    try:
+        status, body, headers = _read(port, "/?lang=zh")
+        assert status == 200
+        assert "仓库插件" in body
+        assert "lang=zh" in (headers.get("Set-Cookie") or "")
+
+        # A follow-up request without ?lang= but with the cookie stays Chinese.
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{port}/", headers={"Cookie": "lang=zh"}
+        )
+        with urllib.request.urlopen(req) as resp:
+            body2 = resp.read().decode("utf-8")
+        assert "仓库插件" in body2
+
+        # Switching back to English overwrites the cookie.
+        status, body3, headers3 = _read(port, "/?lang=en")
+        assert "Repository" in body3
+        assert "lang=en" in (headers3.get("Set-Cookie") or "")
+    finally:
+        server.shutdown()
+        thread.join()
+
+
+def test_webui_login_language_switch(repo_server, tmp_path):
+    repo, _server = repo_server
+    add_plugin(repo, tmp_path, "WebPlugin")
+    server, thread, port = start_server(repo, auth_token="secret")
+    try:
+        # Unauthenticated request with ?lang=zh shows the Chinese login page.
+        status, body, _ = _read(port, "/?lang=zh")
+        assert status == 401
+        assert "需要认证" in body
+        assert "令牌" in body
+        assert "解锁" in body
+        assert "WebPlugin" not in body
+    finally:
+        server.shutdown()
+        thread.join()
+
+
+def test_webui_catalog_status_localized(repo_server, tmp_path):
+    import hashlib
+    import json
+    import zipfile
+
+    repo, _server = repo_server
+
+    # Build a CSS package zip and an index source pointing at it, so the
+    # catalog search returns the plugin (like the API catalog test).
+    pkg = make_css_package(tmp_path, "WebPlugin")
+    zip_path = tmp_path / "webplugin.zip"
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for f in sorted(pkg.rglob("*")):
+            if f.is_file():
+                zf.write(f, f.relative_to(pkg).as_posix())
+    index_path = tmp_path / "index.json"
+    sha256 = hashlib.sha256(zip_path.read_bytes()).hexdigest()
+    index_path.write_text(
+        json.dumps(
+            {
+                "schema": 1,
+                "plugins": {
+                    "WebPlugin": {
+                        "id": "WebPlugin",
+                        "version": "1.0.0",
+                        "download_url": zip_path.as_uri(),
+                        "sha256": sha256,
+                        "plugin_type": "css",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert cli.main(["--repo", str(repo), "source", "add", index_path.as_uri()]) == 0
+    cli.main(["--repo", str(repo), "install", "WebPlugin"])
+
+    server, thread, port = start_server(repo)
+    try:
+        # English catalog status: "Installed(1.0.0)" (no space).
+        status, body, _ = _read(port, "/?q=WebPlugin&lang=en")
+        assert status == 200
+        assert "Installed(1.0.0)" in body
+
+        # Chinese catalog status: "已装(1.0.0)".
+        status, body, _ = _read(port, "/?q=WebPlugin&lang=zh")
+        assert status == 200
+        assert "已装(1.0.0)" in body
+    finally:
+        server.shutdown()
+        thread.join()

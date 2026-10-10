@@ -171,3 +171,19 @@ Status: [x] done, [~] in progress, [ ] planned.
 
 ## Docs
 - [x] README/CHANGELOG updated for every item above; tests: 217 passing.
+
+## Fourth-round feedback (web UI language switching)
+
+### FR — Web 界面支持中英文切换
+- [x] 页面右上角新增 `中文 | English` 切换链接（登录页同样提供）。
+- [x] 语言解析顺序：`?lang=` 查询参数 → `lang` Cookie → 浏览器
+      `Accept-Language` → 默认英文；`?lang=en|zh` 会写入 Cookie 持久化。
+- [x] 切换链接保留当前搜索词与认证令牌；表单/重定向后语言不丢失。
+- [x] 全站文案本地化：状态卡、插件表（启用/禁用/是/否）、目录表头、
+      搜索框占位、按钮（安装/搜索目录/全部更新）、目录状态
+      （未安装/已装/仓库…）、登录页（令牌/解锁）。
+- [x] 新增 4 个测试（中文页面、Cookie 持久化、登录页切换、目录状态本地化）；
+      全套 221 个测试通过。
+
+## Docs
+- [x] README/CHANGELOG 已同步语言切换功能说明。
