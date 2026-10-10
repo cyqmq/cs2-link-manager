@@ -106,6 +106,8 @@ def build_pkg(
     names: str | list[str],
     out_path: str | Path,
     pack_name: str | None = None,
+    description: str | None = None,
+    category: str | None = None,
 ) -> Path:
     """Package one or more repository entries into a ``.cs2pkg`` file.
 
@@ -160,7 +162,7 @@ def build_pkg(
             meta["requires_frameworks"] = list(manifest["requires_frameworks"])
         if manifest.get("platform") and manifest.get("platform") != "all":
             meta["platform"] = manifest["platform"]
-        for field in ("author", "description", "license", "homepage", "repository"):
+        for field in ("author", "description", "license", "homepage", "repository", "category"):
             if manifest.get(field):
                 meta[field] = manifest[field]
     else:
@@ -178,7 +180,7 @@ def build_pkg(
         # Preserve optional metadata so a .cs2pkg round trip keeps author,
         # description, license, homepage, repository and API dependency info.
         first = manifests[0]
-        for field in ("author", "description", "license", "homepage", "repository"):
+        for field in ("author", "description", "license", "homepage", "repository", "category"):
             if first.get(field):
                 meta[field] = first[field]
         deps = first.get("dependencies") or {}
@@ -194,6 +196,12 @@ def build_pkg(
             meta["api_version"] = first["api_version"]
         if first.get("entry"):
             meta["entry"] = first["entry"]
+
+    # CLI-provided overrides win over manifest metadata (e.g. `pack --description`).
+    if description is not None:
+        meta["description"] = description
+    if category is not None:
+        meta["category"] = category
 
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr(PKG_META_FILENAME, json.dumps(meta, indent=2) + "\n")

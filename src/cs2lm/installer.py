@@ -428,6 +428,7 @@ class PluginManager:
                     "version": manifest.get("version", "?"),
                     "enabled": bool(manifest.get("enabled")),
                     "installed": installed,
+                    "category": manifest.get("category") or "",
                 }
             )
         return result

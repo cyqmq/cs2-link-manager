@@ -72,6 +72,7 @@ def registry_add(
     name: str,
     url: str,
     description: str = "",
+    category: str = "",
     type_hint: str | None = None,
     addons_subdir: str | None = None,
     sha256: str | None = None,
@@ -95,6 +96,7 @@ def registry_add(
     entry = {
         "url": url,
         "description": description,
+        "category": category,
         "type": type_hint,
         "addons_subdir": addons_subdir,
         "sha256": sha256,

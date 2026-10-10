@@ -65,6 +65,7 @@ _I18N: dict[str, dict[str, str]] = {
         "error": "Error",
         "warning": "warning",
         "catalog": "Catalog",
+        "category": "Category",
         "name": "Name",
         "type": "Type",
         "version": "Version",
@@ -108,6 +109,7 @@ _I18N: dict[str, dict[str, str]] = {
         "error": "错误",
         "warning": "警告",
         "catalog": "插件目录",
+        "category": "分类",
         "name": "名称",
         "type": "类型",
         "version": "版本",
@@ -302,6 +304,7 @@ def _render_page(
             f"<td>{name}</td>"
             f"<td>{html.escape(str(r['type']))}</td>"
             f"<td>{html.escape(str(r['version']))}</td>"
+            f"<td>{html.escape(str(r.get('category') or ''))}</td>"
             f"<td>{enabled}</td>"
             f"<td>{installed}</td>"
             f"<td><form method='post' action='/toggle'>"
@@ -328,7 +331,10 @@ def _render_page(
             status_text = html.escape(status_text)
             version = html.escape(str(item.get("version") or ""))
             source_label = html.escape(str(item.get("source") or ""))
+            category = str(item.get("category") or "")
             desc = html.escape(str(item.get("description") or ""))
+            if category:
+                desc = f"[{html.escape(category)}] {desc}"
             cat_rows.append(
                 f"<tr><td>{item.get('index')}</td><td>{iname}</td>"
                 f"<td>{version}</td><td>{status_text}</td>"
@@ -389,8 +395,8 @@ def _render_page(
   {catalog_html}
   <h2>{_t(lang, 'repository')}</h2>
   <table>
-    <thead><tr><th>{_t(lang, 'name')}</th><th>{_t(lang, 'type')}</th><th>{_t(lang, 'version')}</th><th>{_t(lang, 'enabled')}</th><th>{_t(lang, 'installed')}</th><th></th></tr></thead>
-    <tbody>{''.join(rows_html) or f'<tr><td colspan="6">{no_plugins_in_repo}</td></tr>'}</tbody>
+    <thead><tr><th>{_t(lang, 'name')}</th><th>{_t(lang, 'type')}</th><th>{_t(lang, 'version')}</th><th>{_t(lang, 'category')}</th><th>{_t(lang, 'enabled')}</th><th>{_t(lang, 'installed')}</th><th></th></tr></thead>
+    <tbody>{''.join(rows_html) or f'<tr><td colspan="7">{no_plugins_in_repo}</td></tr>'}</tbody>
   </table>
 </body>
 </html>

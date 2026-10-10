@@ -51,6 +51,7 @@ MyPlugin.cs2pkg
 | `platform` | 字符串 | 否 | `windows` / `linux` / `all`（默认 `all`）。安装时若与当前主机不匹配会警告。 |
 | `author` | 字符串 | 否 | 作者。 |
 | `description` | 字符串 | 否 | 简介。 |
+| `category` | 字符串 | 否 | 分类（如 `admin`、`retakes`、`utils`），便于目录搜索与 Web 展示。 |
 | `license` | 字符串 | 否 | 许可证。 |
 | `homepage` | 字符串 | 否 | 主页。 |
 | `repository` | 字符串 | 否 | 源码仓库。 |
@@ -86,6 +87,15 @@ MyPlugin.cs2pkg
   "platform": "windows"
 }
 ```
+
+命令行设置这些字段：
+
+* `cs2lm pack MyPlugin --out releases/ --description "..." --category "retakes"`
+  把 `description` / `category` 写进 cs2pkg.json（覆盖 manifest 里的值）；
+* `cs2lm add MyPlugin path/ --description "..." --category "admin"` 在导入时直接
+  写入 manifest（即使包本身没有 cs2pkg.json）；
+* `cs2lm registry add Name url --description "..." --category "utils"` 写进
+  本地注册表条目。
 
 `roots` 的值是**服务器根相对路径**（相对 `<server>/game`）：
 

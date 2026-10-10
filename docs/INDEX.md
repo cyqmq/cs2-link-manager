@@ -53,6 +53,7 @@
 | `yanked` | 布尔 | 否 | 为 `true` 表示该版本已撤回，不参与选择。 |
 | `name` | 字符串 | 否 | 展示名。 |
 | `description` | 字符串 | 否 | 简介。 |
+| `category` | 字符串 | 否 | 分类（如 `admin`、`retakes`、`utils`），search / Web 目录中展示。 |
 | `author` | 字符串 | 否 | 作者。 |
 | `homepage` | 字符串 | 否 | 主页。 |
 | `tags` | 字符串数组 | 否 | 分类标签。 |

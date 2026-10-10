@@ -179,11 +179,33 @@ def build_parser() -> argparse.ArgumentParser:
         help="Split a multi-plugin package: comma-separated plugin directory "
         "names inside the package to add as separate repository entries",
     )
+    p_add.add_argument(
+        "--description",
+        default=None,
+        help="Plugin description stored in the manifest and cs2pkg.json "
+        "(overrides a description read from the package)",
+    )
+    p_add.add_argument(
+        "--category",
+        default=None,
+        help="Plugin category (e.g. admin, retakes, utils) stored in the "
+        "manifest and cs2pkg.json",
+    )
 
     p_pack = sub.add_parser("pack", help="Package one or more repository plugins as a .cs2pkg file")
     p_pack.add_argument("names", nargs="+", help="Plugin name(s); separate several names by spaces or commas for a multi-plugin package")
     p_pack.add_argument("--name", default=None, help="Package label for a multi-plugin pack (default: first plugin name)")
     p_pack.add_argument("--out", default=".", help="Output directory or file path (default: current directory)")
+    p_pack.add_argument(
+        "--description",
+        default=None,
+        help="Package description written to cs2pkg.json (overrides manifest)",
+    )
+    p_pack.add_argument(
+        "--category",
+        default=None,
+        help="Package category written to cs2pkg.json (overrides manifest)",
+    )
 
     p_install = sub.add_parser("install", help="Install a plugin (from the repo, a source, or a catalog #N)")
     p_install.add_argument("name", help="Plugin name, or #N catalog reference from 'cs2lm search'")
@@ -283,6 +305,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_registry_add.add_argument("name")
     p_registry_add.add_argument("url")
     p_registry_add.add_argument("--description", default="")
+    p_registry_add.add_argument("--category", default="")
     p_registry_add.add_argument("--type", choices=framework_choices, default=None)
     p_registry_add.add_argument("--addons-subdir", default=None)
     p_registry_add.add_argument("--sha256", default=None, help="Expected SHA-256 of the downloaded zip")
@@ -477,11 +500,20 @@ def cmd_add(args: argparse.Namespace, logger: Logger) -> int:
                     src,
                     type_hint=args.type,
                     version=args.version,
-                    meta=meta,
+                    meta=with_cli_meta(meta),
                 )
             )
             warn_platform(name, meta)
         return manifests
+
+    def with_cli_meta(meta: dict | None) -> dict:
+        """Overlay ``add --description/--category`` on package metadata."""
+        merged = dict(meta or {})
+        if args.description is not None:
+            merged["description"] = args.description
+        if args.category is not None:
+            merged["category"] = args.category
+        return merged
 
     if args.url:
         with tempfile.TemporaryDirectory(prefix="cs2lm-url-") as tmp:
@@ -508,6 +540,7 @@ def cmd_add(args: argparse.Namespace, logger: Logger) -> int:
                 source,
                 type_hint=args.type,
                 version=args.version,
+                meta=with_cli_meta(None),
             )
             warn_if_empty(args.name, source)
             warn_version_default(args.name, manifest, tmp)
@@ -528,7 +561,7 @@ def cmd_add(args: argparse.Namespace, logger: Logger) -> int:
                     plugin_name,
                     source,
                     version=args.version or (meta or {}).get("version"),
-                    meta=meta,
+                    meta=with_cli_meta(meta),
                 )
                 warn_platform(plugin_name, meta)
                 _print_added([manifest])
@@ -552,7 +585,7 @@ def cmd_add(args: argparse.Namespace, logger: Logger) -> int:
                     source,
                     type_hint=type_hint,
                     version=version,
-                    meta=meta,
+                    meta=with_cli_meta(meta),
                 )
                 _print_added([manifest])
     else:
@@ -583,7 +616,7 @@ def cmd_add(args: argparse.Namespace, logger: Logger) -> int:
                 args.name,
                 args.path,
                 version=args.version or (local_meta or {}).get("version"),
-                meta=local_meta,
+                meta=with_cli_meta(local_meta),
             )
             warn_platform(args.name, local_meta)
             _print_added([manifest])
@@ -594,6 +627,7 @@ def cmd_add(args: argparse.Namespace, logger: Logger) -> int:
                 args.path,
                 type_hint=args.type,
                 version=args.version,
+                meta=with_cli_meta(None),
             )
             warn_if_empty(args.name, args.path)
             _print_added([manifest])
@@ -668,16 +702,17 @@ def cmd_list(args: argparse.Namespace, logger: Logger) -> int:
     name_w = max(len("NAME"), *(len(r["name"]) for r in rows))
     type_w = max(len("TYPE"), *(len(r["type"]) for r in rows))
     ver_w = max(len("VERSION"), *(len(r["version"]) for r in rows))
+    cat_w = max(len("CATEGORY"), *(len(str(r.get("category") or "")) for r in rows))
     header = (
         f"{'NAME':<{name_w}}  {'TYPE':<{type_w}}  {'VERSION':<{ver_w}}  "
-        f"{'ENABLED':<8} {'INSTALLED':<10}"
+        f"{'CATEGORY':<{cat_w}}  {'ENABLED':<8} {'INSTALLED':<10}"
     )
     print(header)
     print("-" * len(header))
     for r in rows:
         print(
             f"{r['name']:<{name_w}}  {r['type']:<{type_w}}  {r['version']:<{ver_w}}  "
-            f"{str(r['enabled']):<8} {str(r['installed']):<10}"
+            f"{str(r.get('category') or ''):<{cat_w}}  {str(r['enabled']):<8} {str(r['installed']):<10}"
         )
     return 0
 
@@ -721,7 +756,14 @@ def cmd_pack(args: argparse.Namespace, logger: Logger) -> int:
     for value in args.names:
         names.extend(n.strip() for n in value.split(",") if n.strip())
     names = list(dict.fromkeys(names))
-    out = build_pkg(args.repo, names, args.out, pack_name=args.name)
+    out = build_pkg(
+        args.repo,
+        names,
+        args.out,
+        pack_name=args.name,
+        description=args.description,
+        category=args.category,
+    )
     if len(names) == 1:
         label = f"'{names[0]}'"
     else:
@@ -816,6 +858,7 @@ def cmd_registry(args: argparse.Namespace, logger: Logger) -> int:
             args.name,
             args.url,
             description=args.description,
+            category=args.category,
             type_hint=args.type,
             addons_subdir=args.addons_subdir,
             sha256=args.sha256,

@@ -81,17 +81,17 @@ cs2lm profile use competitive
 | 命令 | 说明 |
 | --- | --- |
 | `init --server <dir>` | 创建仓库骨架和 `config.json`；已初始化时重复执行会**更新 server 路径**（插件/源/profile 不动）。目标 server 路径不存在时会打印警告（不阻塞初始化）。 |
-| `add <name> <path>` / `add <name> --url <zip-url> [--addons-subdir <dir>]` / `add [<name>] --pkg <file.cs2pkg>` | 把插件包（本地目录、下载的 zip 或 `.cs2pkg`）复制进仓库，生成 `manifest.json` 并打印 `Added <name> (<type> v<version>)`；`--pkg` 省略名字时用 `cs2pkg.json` 的 `name`；`--addons-subdir` 指定 zip 内 `addons/` 树所在的子目录（如 `public`）；`--type css|metamod|swiftly|plugify|modsharp` 可跳过自动识别。`--type`/`--version`/`--plugins` 等选项可以放在 `name` 与 `path` **之间**（如 `add Name --type css path`）。传 `.cs2pkg` 路径给 `add <name> <path>` 会提示改用 `--pkg`；包内没有 `manifest.json`/`cs2pkg.json` 时版本默认 `1.0.0` 并打印警告（可用 `--version` 指定）；包看起来不像插件（无 addons/ 树或二进制）时也会警告。 |
-| `pack <name> [<name> ...] [--name <label>] [--out <dir>]` | 把仓库插件打包成 `.cs2pkg` 文件；传多个名字（空格或逗号分隔）会打成**多插件包**。 |
+| `add <name> <path>` / `add <name> --url <zip-url> [--addons-subdir <dir>]` / `add [<name>] --pkg <file.cs2pkg>` | 把插件包（本地目录、下载的 zip 或 `.cs2pkg`）复制进仓库，生成 `manifest.json` 并打印 `Added <name> (<type> v<version>)`；`--pkg` 省略名字时用 `cs2pkg.json` 的 `name`；`--addons-subdir` 指定 zip 内 `addons/` 树所在的子目录（如 `public`）；`--type css|metamod|swiftly|plugify|modsharp` 可跳过自动识别。`--description <s>` / `--category <s>` 直接把简介/分类写入 manifest（包内 cs2pkg.json 没有这些字段时尤其有用）。`--type`/`--version`/`--plugins` 等选项可以放在 `name` 与 `path` **之间**（如 `add Name --type css path`）。传 `.cs2pkg` 路径给 `add <name> <path>` 会提示改用 `--pkg`；包内没有 `manifest.json`/`cs2pkg.json` 时版本默认 `1.0.0` 并打印警告（可用 `--version` 指定）；包看起来不像插件（无 addons/ 树或二进制）时也会警告。 |
+| `pack <name> [<name> ...] [--name <label>] [--out <dir>] [--description <s>] [--category <s>]` | 把仓库插件打包成 `.cs2pkg` 文件；传多个名字（空格或逗号分隔）会打成**多插件包**。`--description`/`--category` 会写入 `cs2pkg.json`（覆盖 manifest 里的值）。 |
 | `install <name|#N> [--from-registry] [--timeout <s>] [--force]` | 按 manifest 创建链接（幂等）；如果插件不在仓库里，自动回退到已配置的 `index.json` 源（或本地注册表）下载安装，并递归补装 `requires` 依赖；`#N` 直接引用 `search` 结果快照里的序号。安装前检测插件所属框架是否已装在服务器上，缺失则拒绝（`--force` 绕过，且会被**记住**：之后 `disable` 再 `enable` 不再需要 `--force`）。 |
 | `uninstall <name>` | 删除工具创建的链接，保留仓库文件。 |
 | `enable <name> [--force]` / `disable <name> [--force]` | 创建/删除链接（同 install/uninstall）；`--force` 与 `install --force` 一致，可绕过框架检测；一旦用 `--force` 装过，之后 `enable` 不再需要 `--force`。 |
 | `remove <name>` | 从仓库删除插件（先卸载，再连同 manifest 移到 `trash/plugins/<name>-<时间戳>`），可用 `trash restore` 恢复。 |
 | `trash list` / `trash restore <name>` | 列出回收站中的插件 / 把最新一份同名插件恢复到仓库。 |
-| `list` | 显示名称、类型、版本、启用/安装状态。 |
-| `registry add <name> <url> [--description] [--type] [--addons-subdir] [--sha256 <hex>] [--requires <names>]` | 往本地注册表添加一个插件源（URL）；`--sha256` 记录 zip 校验和，`--requires` 记录依赖插件（逗号分隔）。URL 必须是 http(s):// 或 file://（明显不是 URL 的字符串会被**直接拒绝**）；添加时会做一次 HEAD 可达性探测，不可达会打印警告但照常保存。 |
+| `list` | 显示名称、类型、版本、分类、启用/安装状态。 |
+| `registry add <name> <url> [--description] [--category] [--type] [--addons-subdir] [--sha256 <hex>] [--requires <names>]` | 往本地注册表添加一个插件源（URL）；`--sha256` 记录 zip 校验和，`--requires` 记录依赖插件（逗号分隔），`--description`/`--category` 记录简介/分类。URL 必须是 http(s):// 或 file://（明显不是 URL 的字符串会被**直接拒绝**）；添加时会做一次 HEAD 可达性探测，不可达会打印警告但照常保存。 |
 | `registry list` / `registry remove <name>` | 列出 / 删除注册表条目。 |
-| `search [<query>] [--source <url>] [--timeout <s>]` | 合并所有已配置 `index.json` 源 + 本地注册表，输出带序号的目录（名称/版本/状态/来源/描述），并把结果快照写入 `state/search_result.json` 供 `install #N` 引用。无版本号的注册表条目版本列显示 `-`；**无结果时不覆盖旧快照**（保留 `#N` 引用）。状态区分「已装(版本)」（已链接到服务器）与「仓库(版本,未链接)」（仅存在于仓库，尚未启用）。 |
+| `search [<query>] [--source <url>] [--timeout <s>]` | 合并所有已配置 `index.json` 源 + 本地注册表，输出带序号的目录（名称/版本/状态/来源/描述），并把结果快照写入 `state/search_result.json` 供 `install #N` 引用。带分类的条目会在描述前显示 `[分类]`（如 `[retakes] 简介`）。无版本号的注册表条目版本列显示 `-`；**无结果时不覆盖旧快照**（保留 `#N` 引用）。状态区分「已装(版本)」（已链接到服务器）与「仓库(版本,未链接)」（仅存在于仓库，尚未启用）。 |
 | `update [name...] [--yes] [--force] [--remove-orphans] [--timeout <s>] [--self] [--dry-run]` | 拉取配置的多个 `index.json` 源，只更新**本地已安装**的插件；缺失插件**不列出、绝不自动装**（避免大源刷屏）；`--force` 可绕过更新时的框架检测；`--remove-orphans` 把不在任何源里的插件移到仓库 trash；`--self` 尝试更新工具自身（git 检出时执行 `git pull`）。 |
 | `source add <index-url> [--name <n>] [--header "K: V"]...` | 添加一个 `index.json` 插件源（可带鉴权 header）；添加前会先抓取并校验 `index.json`（schema + plugins 对象），无效/不可达会拒绝添加。 |
 | `source list` / `source remove <index-url>` / `source clear` | 列出 / 删除 / 清空插件源。 |
@@ -375,6 +375,7 @@ API 版本直接从
   "plugin_type": "css",
   "author": "Alice",
   "description": "A competitive config plugin",
+  "category": "retakes",
   "license": "MIT",
   "homepage": "https://example.com",
   "repository": "https://github.com/example/myplugin",
@@ -384,6 +385,10 @@ API 版本直接从
   "ini_lines": []
 }
 ```
+
+`description` / `category` 会在 `search`（描述前显示 `[分类]`）和 Web 目录中
+展示；`pack --description/--category` 与 `add --description/--category`
+可以覆盖或补填这两个字段。
 
 `requires` 是本插件的**插件级依赖**列表（别的仓库插件名），安装时工具会先
 自动安装这些依赖；若依赖不在仓库里则报错。禁用被其他已启用插件依赖的插件
@@ -685,9 +690,9 @@ cs2lm web --port 8080
 **已安装的插件框架**、仓库路径、服务器路径）。状态卡下方提供：
 
 * **目录搜索** — 输入关键词搜索所有 `index.json` 源 + 本地注册表，带
-  状态/来源/描述，每个结果有一键 **Install** 按钮；
+  状态/来源/描述（有分类时显示 `[分类] 描述`），每个结果有一键 **Install** 按钮；
 * **Update all** — 一键执行 `cs2lm update --yes`；
-* **插件表** — 列出仓库插件（名称、类型、版本、启用状态、安装状态），
+* **插件表** — 列出仓库插件（名称、类型、版本、**分类**、启用状态、安装状态），
   提供启用/禁用按钮。
 
 **中英文切换**：页面右上角有 `中文 | English` 切换链接（登录页也有）。

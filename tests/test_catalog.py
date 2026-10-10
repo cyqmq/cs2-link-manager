@@ -259,3 +259,69 @@ def test_cli_install_reports_missing_dependency(repo_server, tmp_path, capsys):
     captured = capsys.readouterr()
     assert "GhostLib" in captured.err
     assert "Install failed" in captured.out
+
+
+def test_search_shows_category(repo_server, tmp_path, capsys):
+    """search surfaces ``category`` in rows and prints a ``[category]`` prefix."""
+    repo, _server = repo_server
+    zip_path = _zip_package(make_css_package(tmp_path, "CatPlugin"), tmp_path / "cat.zip")
+    index_path = _write_index(
+        tmp_path,
+        {
+            "CatPlugin": {
+                "id": "CatPlugin",
+                "version": "1.0.0",
+                "download_url": zip_path.as_uri(),
+                "plugin_type": "css",
+                "description": "A categorized plugin",
+                "category": "retakes",
+            }
+        },
+    )
+    _add_source(repo, index_path)
+
+    assert cli.main(["--repo", str(repo), "search", "Cat"]) == 0
+    out = capsys.readouterr().out
+    assert "[retakes]" in out
+    assert "A categorized plugin" in out
+
+    # API rows carry category too.
+    from cs2lm.catalog import search_catalog
+
+    rows, _ = search_catalog(repo, query="Cat")
+    assert rows[0]["category"] == "retakes"
+
+
+def test_cli_registry_add_category(repo_server, tmp_path, capsys):
+    """``registry add --category`` stores the category on the entry."""
+    import json
+
+    repo, _server = repo_server
+    zip_path = _zip_package(make_css_package(tmp_path, "RegCat"), tmp_path / "rc.zip")
+    assert (
+        cli.main(
+            [
+                "--repo",
+                str(repo),
+                "registry",
+                "add",
+                "RegCat",
+                zip_path.as_uri(),
+                "--category",
+                "admin",
+                "--description",
+                "reg desc",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    entries = json.loads((repo / "registry.json").read_text(encoding="utf-8"))
+    assert entries["RegCat"]["category"] == "admin"
+    assert entries["RegCat"]["description"] == "reg desc"
+
+    # The catalog row exposes it as well.
+    from cs2lm.catalog import search_catalog
+
+    rows, _ = search_catalog(repo, query="RegCat")
+    assert rows[0]["category"] == "admin"

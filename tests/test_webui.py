@@ -407,3 +407,82 @@ def test_webui_catalog_status_localized(repo_server, tmp_path):
     finally:
         server.shutdown()
         thread.join()
+
+
+def test_webui_shows_category_in_catalog_and_repo_table(repo_server, tmp_path):
+    """The web UI shows category in the repository table and catalog search."""
+    import hashlib
+    import json
+    import zipfile
+
+    repo, _server = repo_server
+
+    # A repo plugin whose manifest carries a category (via `add --category`).
+    pkg = make_css_package(tmp_path, "WebCat")
+    assert (
+        cli.main(
+            [
+                "--repo",
+                str(repo),
+                "add",
+                "WebCat",
+                str(pkg),
+                "--category",
+                "utils",
+                "--description",
+                "web cat desc",
+            ]
+        )
+        == 0
+    )
+
+    # An index source with category so the catalog search returns it too.
+    zip_path = tmp_path / "webcat.zip"
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for f in sorted(pkg.rglob("*")):
+            if f.is_file():
+                zf.write(f, f.relative_to(pkg).as_posix())
+    index_path = tmp_path / "index.json"
+    sha256 = hashlib.sha256(zip_path.read_bytes()).hexdigest()
+    index_path.write_text(
+        json.dumps(
+            {
+                "schema": 1,
+                "plugins": {
+                    "WebCat": {
+                        "id": "WebCat",
+                        "version": "1.0.0",
+                        "download_url": zip_path.as_uri(),
+                        "sha256": sha256,
+                        "plugin_type": "css",
+                        "description": "web cat desc",
+                        "category": "utils",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert cli.main(["--repo", str(repo), "source", "add", index_path.as_uri()]) == 0
+
+    server, thread, port = start_server(repo)
+    try:
+        # Repository table shows the Category column and its value.
+        status, body, _ = _read(port, "/")
+        assert status == 200
+        assert "Category" in body
+        assert "utils" in body
+
+        # Catalog search shows the [category] prefix in the description.
+        status, body, _ = _read(port, "/?q=WebCat&lang=en")
+        assert status == 200
+        assert "[utils]" in body
+        assert "web cat desc" in body
+
+        # Chinese UI localizes the column header.
+        status, body, _ = _read(port, "/?lang=zh")
+        assert status == 200
+        assert "分类" in body
+    finally:
+        server.shutdown()
+        thread.join()

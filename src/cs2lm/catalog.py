@@ -146,6 +146,7 @@ def search_catalog(
                 "source_url": source_url,
                 "source_kind": "index",
                 "description": entry.get("description") or "",
+                "category": entry.get("category") or "",
                 "download_url": entry.get("download_url"),
                 "sha256": entry.get("sha256"),
                 "requires": entry.get("requires"),
@@ -171,6 +172,7 @@ def search_catalog(
                 "source_url": None,
                 "source_kind": "registry",
                 "description": entry.get("description") or "",
+                "category": entry.get("category") or "",
                 "download_url": entry.get("url"),
                 "sha256": entry.get("sha256"),
                 "requires": entry.get("requires"),
@@ -201,10 +203,13 @@ def print_catalog(rows: list[dict]) -> None:
     )
     print(header)
     for r in rows:
+        desc = str(r["description"])
+        if r.get("category"):
+            desc = f"[{r['category']}] {desc}"
         print(
             f"#  [{r['index']:>{idx_w}}]  {str(r['name']):<{name_w}}  "
             f"{str(r['version'] or '-'):<{ver_w}}  {str(r['status']):<{status_w}}  "
-            f"{str(r['source']):<{source_w}}  {r['description']}"
+            f"{str(r['source']):<{source_w}}  {desc}"
         )
 
 

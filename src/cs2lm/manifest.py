@@ -692,7 +692,7 @@ def add_plugin(
             "dependencies": _detect_dependencies(plugin_type, files_root),
         }
         if meta:
-            for field in ("author", "description", "license", "homepage", "repository"):
+            for field in ("author", "description", "license", "homepage", "repository", "category"):
                 if meta.get(field):
                     manifest[field] = meta[field]
             if meta.get("api_version") is not None:
@@ -863,7 +863,7 @@ def add_content(
             "requires_frameworks": requires_fw,
             "platform": (meta.get("platform") or "all").lower(),
         }
-        for field in ("author", "description", "license", "homepage", "repository"):
+        for field in ("author", "description", "license", "homepage", "repository", "category"):
             if meta.get(field):
                 manifest[field] = meta[field]
         save_manifest(repo, name, manifest)

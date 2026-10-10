@@ -175,3 +175,85 @@ def test_add_pkg_multi_plugin_splits(repo_server, tmp_path):
     rc = cli.main(["--repo", str(repo), "add", "--pkg", str(pkg_path)])
     assert rc == 0
     assert list_plugins(repo) == ["FunCommands", "SimpleAdmin", "StealthModule"]
+
+
+def test_build_pkg_preserves_description_and_category(repo_server, tmp_path):
+    """pack keeps ``description`` and ``category`` in cs2pkg.json."""
+    repo, _server = repo_server
+    add_plugin(
+        repo,
+        "MyPlugin",
+        make_css_package(tmp_path, "MyPlugin"),
+        meta={"description": "My desc", "category": "retakes"},
+    )
+    pkg_path = build_pkg(repo, "MyPlugin", tmp_path / "dist")
+    meta = load_pkg_meta(pkg_path)
+    assert meta["description"] == "My desc"
+    assert meta["category"] == "retakes"
+
+
+def test_cli_pack_flags_set_description_and_category(repo_server, tmp_path):
+    """``pack --description/--category`` override metadata in cs2pkg.json."""
+    repo, _server = repo_server
+    add_plugin(repo, "PackMe", make_css_package(tmp_path, "PackMe"))
+    out_dir = tmp_path / "releases"
+    rc = cli.main(
+        [
+            "--repo",
+            str(repo),
+            "pack",
+            "PackMe",
+            "--out",
+            str(out_dir),
+            "--description",
+            "packed desc",
+            "--category",
+            "admin",
+        ]
+    )
+    assert rc == 0
+    meta = load_pkg_meta(out_dir / "PackMe.cs2pkg")
+    assert meta["description"] == "packed desc"
+    assert meta["category"] == "admin"
+
+
+def test_add_from_pkg_propagates_description_and_category(repo_server, tmp_path):
+    """``add --pkg`` carries ``description`` + ``category`` into the new manifest."""
+    src_repo, _server = repo_server
+    add_plugin(
+        src_repo,
+        "PkgPlugin",
+        make_css_package(tmp_path, "PkgPlugin"),
+        meta={"description": "pkg desc", "category": "utils"},
+    )
+    pkg_path = build_pkg(src_repo, "PkgPlugin", tmp_path / "dist")
+
+    target_repo = init_repo(tmp_path, repo_name="target")
+    rc = cli.main(["--repo", str(target_repo), "add", "PkgPlugin", "--pkg", str(pkg_path)])
+    assert rc == 0
+    manifest = load_manifest(target_repo, "PkgPlugin")
+    assert manifest["description"] == "pkg desc"
+    assert manifest["category"] == "utils"
+
+
+def test_cli_add_flags_set_manifest_meta(repo_server, tmp_path):
+    """``add --description/--category`` annotate the manifest without a package."""
+    repo, _server = repo_server
+    pkg = make_css_package(tmp_path, "FlaggedPlugin")
+    rc = cli.main(
+        [
+            "--repo",
+            str(repo),
+            "add",
+            "FlaggedPlugin",
+            str(pkg),
+            "--description",
+            "flag desc",
+            "--category",
+            "misc",
+        ]
+    )
+    assert rc == 0
+    manifest = load_manifest(repo, "FlaggedPlugin")
+    assert manifest["description"] == "flag desc"
+    assert manifest["category"] == "misc"

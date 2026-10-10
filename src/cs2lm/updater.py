@@ -42,7 +42,7 @@ from cs2lm.manifest import (
 from cs2lm.url_add import DownloadError, download_and_extract, resolve_addons_subdir
 from cs2lm.versions import version_gt
 
-_META_FIELDS = ("author", "description", "license", "homepage", "repository")
+_META_FIELDS = ("author", "description", "license", "homepage", "repository", "category")
 _PKG_META_FILENAMES = ("manifest.json", "cs2pkg.json")
 
 

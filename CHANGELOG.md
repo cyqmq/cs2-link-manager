@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **description & category metadata**: `.cs2pkg` / `cs2pkg.json`, manifests and
+  registry entries now support a `category` field alongside `description`
+  (`pack --description/--category`, `add --description/--category`,
+  `registry add --category`). Both fields survive `pack`/`add --pkg` round trips
+  and `update`, are exposed by `list` / `GET /api/plugins`, and are shown in
+  `search` and the web UI as a `[category]` prefix on the description.
 - **web UI language switching**: the web UI now supports English / 中文 with a
   top-right `中文 | English` switcher (also present on the login page). The
   choice is persisted in a `lang` cookie (`?lang=en|zh` sets it), falls back to

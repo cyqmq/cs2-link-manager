@@ -187,3 +187,20 @@ Status: [x] done, [~] in progress, [ ] planned.
 
 ## Docs
 - [x] README/CHANGELOG 已同步语言切换功能说明。
+
+## Fifth-round feedback (cs2pkg 格式增强)
+
+### FR — cs2pkg 增加 Description / Category 字段（用户建议）
+- [x] `cs2pkg.json` 与 manifest 支持 `description` + 新增 `category` 字段；
+      `pack` 自动写入，`add --pkg` 读回，`update` 保留。
+- [x] CLI 新增 `pack --description/--category`、`add --description/--category`、
+      `registry add --category`；注册表条目同样保存 `category`。
+- [x] 展示：`list` 增加 CATEGORY 列；`search` 在描述前显示 `[分类]`；
+      Web 仓库表增加分类列、目录搜索显示 `[分类] 描述`；`GET /api/plugins`
+      返回 `category` 字段。
+- [x] 文档：`docs/format.md`、`docs/INDEX.md`、README、CHANGELOG 已更新。
+- [x] 新增 7 个测试（pack/add 往返、CLI 参数、search 展示、registry 分类、
+      Web 展示）；全套 228 个测试通过。
+
+## Docs
+- [x] README/CHANGELOG/格式规范已同步本轮改动。
